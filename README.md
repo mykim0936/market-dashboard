@@ -157,6 +157,16 @@ python -c "import sys; print(sys.executable)"
   재현해 정상 동작을 확인했다).
 - 갱신을 연달아 누르지 말 것. 스케줄러와 버튼이 동시에 돌아도 파일 락으로 막힌다.
 
+**코스피/코스닥 차트가 안 나오거나 이상함**
+
+2026-08-18에 지수 데이터 소스를 FinanceDataReader에서 pykrx(국내)/yfinance(해외)로 교체했다.
+다만 이건 **라이브러리를 바꾼 것이지 KRX 자체의 불안정을 없앤 게 아니다** — pykrx도 결국
+KRX 공식 사이트에서 지수를 받아오므로, KRX 지수 엔드포인트 자체가 막히면(위 429/무응답
+상황) pykrx도 똑같이 실패한다(`KeyError: '지수명'` 형태로 나타남). 이 경우 코스피/코스닥
+카드와 차트에 "로드 실패"/"차트를 불러오지 못했습니다" 경고만 뜨고 나머지 패널(나스닥·
+S&P500·환율·보유종목·뉴스, 전부 yfinance/FDR 개별조회)은 영향 없이 정상 동작해야 한다.
+KRX가 복구되면 별도 조치 없이 다음 갱신에서 자동으로 채워진다.
+
 > **사고 기록 (2026-08-17)**: KRX 접속이 막힌 상태에서 `collect.py`가 코스피/코스닥에 대해
 > 빈 응답(0행)을 받고도 그대로 기존 CSV(6,320행, 2001~2026년 히스토리)를 덮어써 데이터가
 > 날아갔다. `collect.py`는 매번 2001-01-01부터 전체 기간을 다시 받는 구조라 KRX 접속이
@@ -165,7 +175,9 @@ python -c "import sys; print(sys.executable)"
 
 ## 데이터 출처
 
-- 지수·환율·보유종목 시세: FinanceDataReader (KRX/야후)
+- 국내 지수(코스피·코스닥): pykrx (KRX 공식 데이터)
+- 해외 지수(나스닥·S&P500)·원/달러 환율: yfinance (pykrx는 환율을 취급하지 않음)
+- 보유 종목 개별 시세: FinanceDataReader (KRX/야후) — 지수 엔드포인트와 무관하게 별도로 동작
 - 거시 지표: 한국은행 ECOS, 세인트루이스 연은 FRED
   (로컬은 `.env`, 클라우드는 Streamlit Secrets에 API 키 필요)
 - 뉴스: 연합뉴스·한국경제·매일경제 / Yahoo Finance·MarketWatch·CNBC·FT·Investing.com RSS

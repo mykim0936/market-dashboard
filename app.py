@@ -33,7 +33,8 @@ for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD'):
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
 
-import FinanceDataReader as fdr
+import pykrx.stock as pykrx_stock
+import yfinance as yf
 
 import fetch_indicators
 import fetch_news
@@ -41,21 +42,21 @@ import fetch_portfolio
 
 DATA_DIR = 'data'
 
-# (label, 파일명, FDR 심볼) — kospi/kosdaq은 'Date' 컬럼이 있고, usdkrw/nasdaq은 날짜가
-# 헤더 없는 첫 컬럼(인덱스)으로 저장되어 있어 로더에서 둘 다 처리한다.
+# (label, 파일명, 소스, 코드) — 국내 지수는 pykrx, 해외 지수·환율은 yfinance를 쓴다
+# (collect.py 와 동일한 소스 구성. 2026-08-18 FinanceDataReader에서 교체).
 SERIES_CONFIG = [
-    ('코스피', 'kospi.csv', 'KS11'),
-    ('코스닥', 'kosdaq.csv', 'KQ11'),
-    ('원/달러', 'usdkrw.csv', 'USD/KRW'),
-    ('나스닥', 'nasdaq.csv', 'IXIC'),
-    ('S&P500', 'sp500.csv', 'US500'),
+    ('코스피', 'kospi.csv', 'pykrx', '1001'),
+    ('코스닥', 'kosdaq.csv', 'pykrx', '2001'),
+    ('원/달러', 'usdkrw.csv', 'yfinance', 'KRW=X'),
+    ('나스닥', 'nasdaq.csv', 'yfinance', '^IXIC'),
+    ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
 ]
 
 CHART_SERIES = [
-    ('코스피', 'kospi.csv', 'KS11'),
-    ('코스닥', 'kosdaq.csv', 'KQ11'),
-    ('나스닥', 'nasdaq.csv', 'IXIC'),
-    ('S&P500', 'sp500.csv', 'US500'),
+    ('코스피', 'kospi.csv', 'pykrx', '1001'),
+    ('코스닥', 'kosdaq.csv', 'pykrx', '2001'),
+    ('나스닥', 'nasdaq.csv', 'yfinance', '^IXIC'),
+    ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
 ]
 CHART_YEARS = 5
 
@@ -123,16 +124,29 @@ def load_series(filename):
 
 
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
-def load_series_live(symbol, years):
-    start = (datetime.now() - pd.DateOffset(years=years)).strftime('%Y-%m-%d')
-    return fdr.DataReader(symbol, start)
+def load_series_live(source, code, years):
+    start_dt = datetime.now() - pd.DateOffset(years=years)
+
+    if source == 'pykrx':
+        df = pykrx_stock.get_index_ohlcv_by_date(
+            start_dt.strftime('%Y%m%d'), datetime.now().strftime('%Y%m%d'), code)
+        df = df.rename(columns={'시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'})
+        df.index.name = 'Date'
+        return df
+
+    # yfinance — 단일 종목이어도 (Price, Ticker) 멀티인덱스 컬럼을 반환하므로 정리한다.
+    df = yf.download(code, start=start_dt.strftime('%Y-%m-%d'), progress=False)
+    if not df.empty and isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df.index.name = 'Date'
+    return df
 
 
-def get_series(filename, symbol, years):
+def get_series(filename, source, code, years):
     path = os.path.join(DATA_DIR, filename)
     if os.path.exists(path):
         return load_series(filename)
-    return load_series_live(symbol, years)
+    return load_series_live(source, code, years)
 
 
 @st.cache_data(ttl=CACHE_TTL_SEC)
@@ -225,10 +239,10 @@ def file_caption(path, source):
 def render_index_cards():
     st.subheader('지수 현황')
     cols = st.columns(len(SERIES_CONFIG))
-    for col, (label, filename, symbol) in zip(cols, SERIES_CONFIG):
+    for col, (label, filename, source, code) in zip(cols, SERIES_CONFIG):
         with col:
             try:
-                df = get_series(filename, symbol, CHART_YEARS)
+                df = get_series(filename, source, code, CHART_YEARS)
                 last_two = df['Close'].tail(2)
                 current = last_two.iloc[-1]
                 delta = current - last_two.iloc[-2] if len(last_two) == 2 else None
@@ -241,7 +255,7 @@ def render_index_cards():
             except Exception as e:
                 st.metric(label, '-')
                 st.caption(f"로드 실패: {e}")
-    st.caption(file_caption(os.path.join(DATA_DIR, 'kospi.csv'), 'FinanceDataReader') + ' · 전일 대비')
+    st.caption(file_caption(os.path.join(DATA_DIR, 'kospi.csv'), 'pykrx / yfinance') + ' · 전일 대비')
 
 
 def render_macro_panel():
@@ -362,10 +376,10 @@ def render_briefing_panel():
 
 
 def render_index_charts():
-    for label, filename, symbol in CHART_SERIES:
+    for label, filename, source, code in CHART_SERIES:
         st.subheader(f'{label} 최근 {CHART_YEARS}년')
         try:
-            df = get_series(filename, symbol, CHART_YEARS)
+            df = get_series(filename, source, code, CHART_YEARS)
             if df.empty:
                 raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
             cutoff = df.index.max() - pd.DateOffset(years=CHART_YEARS)
@@ -373,7 +387,8 @@ def render_index_charts():
             st.line_chart(recent, color=NEUTRAL_CHART_COLOR)
         except Exception as e:
             st.warning(f"차트를 불러오지 못했습니다: {e}")
-        st.caption(file_caption(os.path.join(DATA_DIR, filename), 'FinanceDataReader'))
+        source_label = 'pykrx (KRX)' if source == 'pykrx' else 'yfinance'
+        st.caption(file_caption(os.path.join(DATA_DIR, filename), source_label))
 
 
 def humanize_age(published_at, now):

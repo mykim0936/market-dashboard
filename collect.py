@@ -7,23 +7,51 @@ import sys
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-import FinanceDataReader as fdr
+import pandas as pd
+import yfinance as yf
 from pykrx import stock
 
-# fdr/pykrx 내부의 urllib 호출 상당수가 자체 타임아웃을 안 걸어서, KRX 쪽이 응답을
+# fdr/pykrx/yfinance 내부의 urllib 호출 상당수가 자체 타임아웃을 안 걸어서, 소스가 응답을
 # 멈추면 프로세스가 무한 대기한다(2026-08-17 fetch_portfolio.py가 180초 넘게 걸린 원인).
 # 소켓 기본 타임아웃을 걸어 무한 대기 대신 명확한 에러로 끝나게 한다.
 socket.setdefaulttimeout(30)
 
-SYMBOLS = {
-    'kospi':  'KS11',     # 코스피
-    'kosdaq': 'KQ11',     # 코스닥
-    'nasdaq': 'IXIC',     # 나스닥 종합
-    'sp500':  'US500',    # S&P500
-    'usdkrw': 'USD/KRW',  # 원달러 환율
+# 국내 지수는 pykrx(KRX 공식 데이터), 해외 지수·환율은 yfinance를 쓴다.
+# pykrx는 환율을 취급하지 않아 원/달러도 yfinance(KRW=X)로 받는다.
+# (2026-08-18: KOSPI/KOSDAQ 차트가 이상하다는 신고로 소스를 FinanceDataReader에서
+#  pykrx/yfinance 조합으로 교체 — 참고로 이 시점 KRX 지수 엔드포인트 자체가 불안정해서
+#  pykrx도 fdr과 동일하게 실패할 수 있으나, 그건 라이브러리 문제가 아니라 소스 자체의
+#  일시 장애이며 MIN_ROW_RATIO 안전장치로 방어된다.)
+PYKRX_INDEX_SYMBOLS = {
+    'kospi': '1001',   # 코스피
+    'kosdaq': '2001',  # 코스닥
+}
+YFINANCE_SYMBOLS = {
+    'nasdaq': '^IXIC',  # 나스닥 종합
+    'sp500': '^GSPC',   # S&P500
+    'usdkrw': 'KRW=X',  # 원/달러 환율
 }
 START = '2001-01-01'
 DATA_DIR = 'data'
+
+
+def fetch_pykrx_index(code, start_str, end_str):
+    """pykrx 지수 OHLCV를 우리 CSV 형식(Date 인덱스, Close 컬럼)에 맞춰 반환한다."""
+    df = stock.get_index_ohlcv_by_date(start_str, end_str, code)
+    df = df.rename(columns={'시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'})
+    df.index.name = 'Date'
+    return df
+
+
+def fetch_yfinance_series(ticker, start):
+    """yfinance는 단일 종목이어도 (Price, Ticker) 멀티인덱스 컬럼을 반환하므로 정리한다."""
+    df = yf.download(ticker, start=start, progress=False)
+    if df.empty:
+        return df
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df.index.name = 'Date'
+    return df
 
 # 장중 스케줄러(10분마다)와 대시보드의 '지금 데이터 갱신' 버튼이 겹쳐 눌리면
 # 같은 CSV에 동시에 쓰다가 깨질 수 있어 파일 락으로 막는다.
@@ -52,23 +80,38 @@ def collect_lock():
 MIN_ROW_RATIO = 0.9
 
 
+def save_series_if_safe(name, df):
+    """새로 받은 행 수가 기존 CSV보다 크게 적으면(소스 일시 장애) 덮어쓰지 않는다."""
+    path = os.path.join(DATA_DIR, f"{name}.csv")
+
+    if os.path.exists(path):
+        existing_rows = sum(1 for _ in open(path, encoding='utf-8-sig')) - 1  # 헤더 제외
+        if len(df) < existing_rows * MIN_ROW_RATIO:
+            print(f"[SKIP] {name}: 새로 받은 {len(df)}행이 기존 {existing_rows}행보다 크게 적어 "
+                  f"소스 장애로 보고 덮어쓰지 않습니다.")
+            return
+
+    df['fetched_at'] = datetime.now().isoformat()  # 조회 시각 기록
+    df.to_csv(path, encoding='utf-8-sig')
+    print(f"[OK] {name}: {len(df)}행 -> {path}")
+
+
 def collect():
     os.makedirs(DATA_DIR, exist_ok=True)   # data 폴더 없으면 생성
-    for name, symbol in SYMBOLS.items():
-        path = os.path.join(DATA_DIR, f"{name}.csv")
+
+    start_str = START.replace('-', '')
+    end_str = datetime.now().strftime('%Y%m%d')
+    for name, code in PYKRX_INDEX_SYMBOLS.items():
         try:
-            df = fdr.DataReader(symbol, START)
+            df = fetch_pykrx_index(code, start_str, end_str)
+            save_series_if_safe(name, df)
+        except Exception as e:
+            print(f"[FAIL] {name}: {e}")
 
-            if os.path.exists(path):
-                existing_rows = sum(1 for _ in open(path, encoding='utf-8-sig')) - 1  # 헤더 제외
-                if len(df) < existing_rows * MIN_ROW_RATIO:
-                    print(f"[SKIP] {name}: 새로 받은 {len(df)}행이 기존 {existing_rows}행보다 크게 적어 "
-                          f"소스 장애로 보고 덮어쓰지 않습니다.")
-                    continue
-
-            df['fetched_at'] = datetime.now().isoformat()  # 조회 시각 기록
-            df.to_csv(path, encoding='utf-8-sig')
-            print(f"[OK] {name}: {len(df)}행 -> {path}")
+    for name, ticker in YFINANCE_SYMBOLS.items():
+        try:
+            df = fetch_yfinance_series(ticker, START)
+            save_series_if_safe(name, df)
         except Exception as e:
             print(f"[FAIL] {name}: {e}")
 
