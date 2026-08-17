@@ -28,7 +28,7 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD'):
+for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'ANTHROPIC_API_KEY'):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -39,6 +39,7 @@ import yfinance as yf
 import fetch_indicators
 import fetch_news
 import fetch_portfolio
+import make_briefing
 
 DATA_DIR = 'data'
 
@@ -79,6 +80,10 @@ CASH_TICKER = 'CASH'
 # 클라우드에서 여러 사용자가 동시에 열어도 KRX/RSS 요청이 과도하게 나가지 않게 한다.
 CACHE_TTL_SEC = 20
 LIVE_FETCH_TTL_SEC = 60
+
+# 브리핑은 유료 API 호출이라 지수/뉴스보다 훨씬 길게 캐시한다 — 패널을 열 때마다
+# 과금되면 안 되므로 15분에 한 번만 실제로 다시 생성한다.
+BRIEFING_TTL_SEC = 900
 
 REFRESH_OPTIONS = {'끔': None, '30초': 30, '1분': 60, '5분': 300}
 QUICK_REFRESH_TIMEOUT_SEC = 300
@@ -383,17 +388,52 @@ def render_portfolio_panel():
                ' · 비중은 현금 제외 주식 평가금액 대비')
 
 
+@st.cache_data(ttl=BRIEFING_TTL_SEC)
+def fetch_briefing_live():
+    """클라우드 배포본용 — claude CLI 없이 Anthropic API로 브리핑을 직접 생성한다.
+    유료 호출이라 인자 없이 캐시해 15분에 한 번만 실제로 호출되게 한다."""
+    indicators_df = get_indicators_df()
+    news_df = get_news_df()
+    if indicators_df.empty or news_df.empty:
+        return None
+
+    indicators_records = indicators_df.to_dict('records')
+    news_records = (
+        news_df.sort_values('published_at', ascending=False)
+        .head(make_briefing.NEWS_LIMIT)
+        .to_dict('records')
+    )
+    return make_briefing.generate_briefing_via_api(indicators_records, news_records)
+
+
 def render_briefing_panel():
     st.subheader('시황 브리핑')
-    if not os.path.exists(BRIEFING_MD):
+
+    if os.path.exists(BRIEFING_MD):
+        with open(BRIEFING_MD, encoding='utf-8') as f:
+            st.markdown(f.read())
+        st.caption(file_caption(BRIEFING_MD, 'claude -p 브리핑 생성 (indicators.csv + news.csv 기반)'))
+        return
+
+    if not os.environ.get('ANTHROPIC_API_KEY'):
         st.info(
-            '이 패널은 로컬에서 `claude -p` 로 생성한 브리핑(make_briefing.py)만 보여준다. '
-            '클라우드 배포본에는 claude CLI가 없어 이 파일이 갱신되지 않는다.'
+            '로컬 브리핑 파일이 없다. 클라우드에서 이 패널을 쓰려면 Secrets에 '
+            'ANTHROPIC_API_KEY 를 설정해 라이브 생성을 켜야 한다.'
         )
         return
-    with open(BRIEFING_MD, encoding='utf-8') as f:
-        st.markdown(f.read())
-    st.caption(file_caption(BRIEFING_MD, 'claude -p 브리핑 생성 (indicators.csv + news.csv 기반)'))
+
+    with st.spinner('브리핑 생성 중...'):
+        text = fetch_briefing_live()
+
+    if text is None:
+        st.warning('브리핑 생성에 실패했습니다 (API 오류이거나 지표/뉴스 데이터가 아직 없음).')
+        return
+
+    st.markdown(text)
+    st.caption(
+        f"갱신 시각: 방금 (라이브 생성, 최대 {BRIEFING_TTL_SEC // 60}분 캐시) · "
+        f"출처: Anthropic API ({make_briefing.ANTHROPIC_MODEL})"
+    )
 
 
 def render_index_charts():

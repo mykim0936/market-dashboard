@@ -80,9 +80,12 @@ python -m streamlit run app.py
    홈 화면에 아이콘으로 추가해두면 앱처럼 쓸 수 있다(iOS: 공유 → 홈 화면에 추가 /
    Android: 브라우저 메뉴 → 홈 화면에 추가).
 
-**클라우드에서 안 되는 것**: `시황 브리핑` 패널은 로컬 `claude` CLI로 생성하므로 클라우드에는
-표시되지 않는다(로컬에서 생성된 `data/briefing.md`를 커밋해두면 그 시점 내용이 고정 표시는
-가능하나 자동 갱신은 안 된다). 나머지 패널(지수/거시/보유종목/뉴스)은 라이브 조회로 정상 동작한다.
+**시황 브리핑 패널**: 로컬에서는 `claude -p` CLI로 생성한다(비용 없음, Claude Code 구독 사용).
+클라우드에는 claude CLI가 없어서, 대신 **Anthropic API를 직접 호출**해 라이브로 생성한다
+(`ANTHROPIC_API_KEY`를 Secrets에 설정했을 때만 — [console.anthropic.com](https://console.anthropic.com)
+에서 발급). 비용이 드는 유료 호출이라 15분에 한 번만 실제로 호출되도록 캐시돼 있고, 짧은
+요약 작업이라 저렴한 Haiku 모델을 쓴다. 키를 설정하지 않으면 이 패널만 "설정 필요" 안내가
+뜨고 나머지 패널(지수/거시/보유종목/뉴스)은 그대로 정상 동작한다.
 
 ## 파일 구성
 
@@ -93,7 +96,7 @@ python -m streamlit run app.py
 | `fetch_portfolio.py` | `portfolio.csv` 기준 보유 종목 시세·평가손익 계산 |
 | `fetch_indicators.py` | ECOS(기준금리·환율) / FRED(미 10년물·달러인덱스) |
 | `fetch_news.py` | 국내외 RSS 10종에서 24시간 이내 기사 수집 |
-| `make_briefing.py` | 지표·뉴스 기반 시황 브리핑 생성 (로컬 claude CLI 필요) |
+| `make_briefing.py` | 지표·뉴스 기반 시황 브리핑 생성 (로컬 claude CLI / 클라우드 Anthropic API) |
 | `validate.py` | 수집 데이터 교차 검증 |
 | `requirements.txt` | Streamlit Cloud 배포용 의존성 목록 |
 | `run_quick_refresh.bat` / `run_full_collect.bat` | Windows 작업 스케줄러가 호출하는 래퍼 |

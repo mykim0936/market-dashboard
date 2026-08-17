@@ -1,9 +1,14 @@
-# make_briefing.py — 지표+뉴스 기반 브리핑 생성 (claude -p 호출)
+# make_briefing.py — 지표+뉴스 기반 브리핑 생성
+# 로컬(collect.py 파이프라인)에서는 claude -p CLI를 그대로 쓰고, 클라우드 배포본은
+# claude CLI가 없으므로 Anthropic API를 requests로 직접 호출한다(생성 라이브러리처럼
+# 다른 스크립트도 requests 기반이라 일관성을 위해 SDK 대신 raw HTTP를 쓴다).
 import csv
 import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
+
+import requests
 
 DATA_DIR = 'data'
 INDICATORS_CSV = os.path.join(DATA_DIR, 'indicators.csv')
@@ -12,6 +17,12 @@ BRIEFING_MD = os.path.join(DATA_DIR, 'briefing.md')
 
 NEWS_LIMIT = 20
 CLAUDE_TIMEOUT_SEC = 120
+
+# 짧은 요약 작업이라 비용이 저렴한 Haiku로 충분하다.
+ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
+ANTHROPIC_MODEL = 'claude-haiku-4-5'
+ANTHROPIC_MAX_TOKENS = 500
+ANTHROPIC_TIMEOUT_SEC = 30
 
 
 def read_csv_rows(path):
@@ -86,6 +97,46 @@ def call_claude(prompt):
         return None
 
     return output
+
+
+def generate_briefing_via_api(indicators_rows, news_rows):
+    """app.py 에서 직접 호출하는 라이브러리 진입점 — claude CLI 없이 Anthropic API로
+    브리핑 텍스트만 생성해 반환한다(파일 저장은 하지 않음). 키가 없거나 호출이
+    실패하면 None을 반환한다."""
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+
+    prompt = build_prompt(indicators_rows, news_rows[:NEWS_LIMIT])
+
+    try:
+        resp = requests.post(
+            ANTHROPIC_API_URL,
+            headers={
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+                'content-type': 'application/json',
+            },
+            json={
+                'model': ANTHROPIC_MODEL,
+                'max_tokens': ANTHROPIC_MAX_TOKENS,
+                'messages': [{'role': 'user', 'content': prompt}],
+            },
+            timeout=ANTHROPIC_TIMEOUT_SEC,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        print(f'브리핑 API 호출 실패: {e}')
+        return None
+
+    if data.get('stop_reason') == 'refusal':
+        print('브리핑 API가 요청을 거부했습니다.')
+        return None
+
+    text_blocks = [b['text'] for b in data.get('content', []) if b.get('type') == 'text']
+    output = ''.join(text_blocks).strip()
+    return output or None
 
 
 def save_briefing(text):
