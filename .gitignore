@@ -1,0 +1,17 @@
+.env
+.streamlit/secrets.toml
+
+__pycache__/
+*.pyc
+
+# 보유 종목(수량/평단가) — 저장소가 Public이라 커밋하지 않는다.
+# 로컬은 이 파일을 그대로 쓰고, 클라우드는 Streamlit Secrets의 [[portfolio]]를 쓴다.
+portfolio.csv
+
+# collect.py 가 로컬 스케줄러로 채우는 산출물 — 클라우드 배포본은 이 파일들이
+# 없어야 app.py 가 라이브 조회 모드로 동작한다.
+data/*.csv
+data/*.log
+data/collect.lock
+data/status.json
+data/briefing.md
