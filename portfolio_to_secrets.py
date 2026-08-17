@@ -80,6 +80,11 @@ def main():
     print(f"-> {PORTFOLIO_CSV} 의 {len(holdings)}개 종목을 TOML로 변환했습니다.\n")
     print(full_text)
 
+    os.makedirs(os.path.dirname(SECRETS_TOML), exist_ok=True)
+    with open(SECRETS_TOML, 'w', encoding='utf-8') as f:
+        f.write(full_text)
+    print(f"-> {SECRETS_TOML} 파일도 최신 내용으로 갱신했습니다.")
+
     if copy_to_clipboard(full_text):
         print("\n-> 클립보드에 복사 완료. Streamlit Cloud의 Settings > Secrets 에 그대로 붙여넣으세요.")
     else:
