@@ -97,6 +97,7 @@ python -m streamlit run app.py
 | `validate.py` | 수집 데이터 교차 검증 |
 | `requirements.txt` | Streamlit Cloud 배포용 의존성 목록 |
 | `run_quick_refresh.bat` / `run_full_collect.bat` | Windows 작업 스케줄러가 호출하는 래퍼 |
+| `portfolio_to_secrets.py` | `portfolio.csv` → Streamlit Secrets용 TOML 변환, 클립보드 복사 |
 | `.streamlit/secrets.toml.example` | 클라우드 Secrets 설정 템플릿(실제 값은 커밋 안 함) |
 
 ## portfolio.csv (직접 관리)
@@ -116,6 +117,17 @@ CMA RP,CASH,12010000,1
   코드와 분리해뒀다. 클라우드 배포본은 대신 Streamlit Secrets의 `[[portfolio]]` 배열을 쓴다
   (`.streamlit/secrets.toml.example` 참고). 종목이 바뀌면 로컬 `portfolio.csv`와 클라우드
   Secrets 양쪽을 똑같이 수정해야 한다 — 자동 동기화되지 않는다.
+
+### 보유 종목이 바뀌었을 때
+
+1. `portfolio.csv` 를 직접 수정한다(종목 추가/삭제, 수량·평단가 변경).
+2. 아래 스크립트를 실행하면 `.streamlit/secrets.toml` 에 저장된 API 키·비밀번호는 그대로 두고
+   `[[portfolio]]` 부분만 `portfolio.csv` 최신 내용으로 다시 만들어 **클립보드에 복사**해준다.
+   ```bash
+   python portfolio_to_secrets.py
+   ```
+3. Streamlit Cloud 앱의 **Manage app → Settings → Secrets** 편집창에 그대로 붙여넣고 **Save**.
+   앱이 자동 재시작되며 반영된다.
 
 ## 문제 해결
 
