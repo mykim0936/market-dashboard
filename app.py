@@ -123,29 +123,46 @@ def load_series(filename):
     return df
 
 
-@st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
-def load_series_live(source, code, years):
-    start_dt = datetime.now() - pd.DateOffset(years=years)
+# pykrx 국내 지수 코드 -> yfinance 폴백 심볼 (KRX가 pykrx/FDR 같은 비공식 스크래핑을 막을 때 씀)
+PYKRX_TO_YFINANCE_FALLBACK = {'1001': '^KS11', '2001': '^KQ11'}
 
-    if source == 'pykrx':
-        df = pykrx_stock.get_index_ohlcv_by_date(
-            start_dt.strftime('%Y%m%d'), datetime.now().strftime('%Y%m%d'), code)
-        df = df.rename(columns={'시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'})
-        df.index.name = 'Date'
-        return df
 
-    # yfinance — 단일 종목이어도 (Price, Ticker) 멀티인덱스 컬럼을 반환하므로 정리한다.
-    df = yf.download(code, start=start_dt.strftime('%Y-%m-%d'), progress=False)
+def fetch_yfinance_df(ticker, start_dt):
+    """yfinance는 단일 종목이어도 (Price, Ticker) 멀티인덱스 컬럼을 반환하므로 정리한다."""
+    df = yf.download(ticker, start=start_dt.strftime('%Y-%m-%d'), progress=False)
     if not df.empty and isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     df.index.name = 'Date'
     return df
 
 
+@st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
+def load_series_live(source, code, years):
+    """반환값은 (df, 실제로 쓰인 출처 라벨) — 국내 지수는 pykrx를 우선 시도하고
+    실패하면 yfinance로 자동 폴백하므로, 캡션에 실제 출처를 보여주려면 라벨도 같이 받아야 한다."""
+    start_dt = datetime.now() - pd.DateOffset(years=years)
+
+    if source == 'pykrx':
+        try:
+            df = pykrx_stock.get_index_ohlcv_by_date(
+                start_dt.strftime('%Y%m%d'), datetime.now().strftime('%Y%m%d'), code)
+            df = df.rename(columns={'시가': 'Open', '고가': 'High', '저가': 'Low', '종가': 'Close', '거래량': 'Volume'})
+            df.index.name = 'Date'
+            if not df.empty:
+                return df, 'pykrx (KRX)'
+        except Exception:
+            pass
+        fallback_ticker = PYKRX_TO_YFINANCE_FALLBACK[code]
+        return fetch_yfinance_df(fallback_ticker, start_dt), 'yfinance (pykrx 실패, 자동 폴백)'
+
+    return fetch_yfinance_df(code, start_dt), 'yfinance'
+
+
 def get_series(filename, source, code, years):
+    """반환값은 (df, 라이브 조회 시 실제로 쓰인 출처 라벨 또는 로컬 CSV면 None)."""
     path = os.path.join(DATA_DIR, filename)
     if os.path.exists(path):
-        return load_series(filename)
+        return load_series(filename), None
     return load_series_live(source, code, years)
 
 
@@ -242,7 +259,7 @@ def render_index_cards():
     for col, (label, filename, source, code) in zip(cols, SERIES_CONFIG):
         with col:
             try:
-                df = get_series(filename, source, code, CHART_YEARS)
+                df, _ = get_series(filename, source, code, CHART_YEARS)
                 last_two = df['Close'].tail(2)
                 current = last_two.iloc[-1]
                 delta = current - last_two.iloc[-2] if len(last_two) == 2 else None
@@ -378,8 +395,9 @@ def render_briefing_panel():
 def render_index_charts():
     for label, filename, source, code in CHART_SERIES:
         st.subheader(f'{label} 최근 {CHART_YEARS}년')
+        live_label = None
         try:
-            df = get_series(filename, source, code, CHART_YEARS)
+            df, live_label = get_series(filename, source, code, CHART_YEARS)
             if df.empty:
                 raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
             cutoff = df.index.max() - pd.DateOffset(years=CHART_YEARS)
@@ -387,7 +405,9 @@ def render_index_charts():
             st.line_chart(recent, color=NEUTRAL_CHART_COLOR)
         except Exception as e:
             st.warning(f"차트를 불러오지 못했습니다: {e}")
-        source_label = 'pykrx (KRX)' if source == 'pykrx' else 'yfinance'
+        # live_label 은 라이브 조회 시 실제로 쓰인 출처(폴백 포함)를 반영한다.
+        # 로컬 CSV를 읽었을 때는 None 이므로 설정된 기본 출처로 표시한다.
+        source_label = live_label or ('pykrx (KRX)' if source == 'pykrx' else 'yfinance')
         st.caption(file_caption(os.path.join(DATA_DIR, filename), source_label))
 
 

@@ -16,15 +16,21 @@ from pykrx import stock
 # 소켓 기본 타임아웃을 걸어 무한 대기 대신 명확한 에러로 끝나게 한다.
 socket.setdefaulttimeout(30)
 
-# 국내 지수는 pykrx(KRX 공식 데이터), 해외 지수·환율은 yfinance를 쓴다.
-# pykrx는 환율을 취급하지 않아 원/달러도 yfinance(KRW=X)로 받는다.
-# (2026-08-18: KOSPI/KOSDAQ 차트가 이상하다는 신고로 소스를 FinanceDataReader에서
-#  pykrx/yfinance 조합으로 교체 — 참고로 이 시점 KRX 지수 엔드포인트 자체가 불안정해서
-#  pykrx도 fdr과 동일하게 실패할 수 있으나, 그건 라이브러리 문제가 아니라 소스 자체의
-#  일시 장애이며 MIN_ROW_RATIO 안전장치로 방어된다.)
+# 국내 지수는 pykrx(KRX 공식 데이터)를 우선 쓰고, 실패하면 yfinance로 자동 폴백한다.
+# 해외 지수·환율은 처음부터 yfinance를 쓴다(pykrx는 환율을 취급하지 않음).
+# (2026-08-18: KOSPI/KOSDAQ 차트가 이상하다는 신고로 소스를 FinanceDataReader에서 교체.
+#  당시 조사 결과 KRX가 pykrx 등 비공식 스크래핑에 접속 차단 조치를 취하고 있어(로그인
+#  필수인 KRX Data Marketplace로 개편 중) pykrx가 시간대와 무관하게 계속 실패할 수 있음을
+#  확인 — 그래서 pykrx를 우선 쓰되 실패 시 yfinance(^KS11/^KQ11, KRX 차단과 무관)로
+#  자동 폴백하도록 구성했다.)
 PYKRX_INDEX_SYMBOLS = {
     'kospi': '1001',   # 코스피
     'kosdaq': '2001',  # 코스닥
+}
+# pykrx 코드 -> yfinance 폴백 심볼
+PYKRX_TO_YFINANCE_FALLBACK = {
+    '1001': '^KS11',
+    '2001': '^KQ11',
 }
 YFINANCE_SYMBOLS = {
     'nasdaq': '^IXIC',  # 나스닥 종합
@@ -52,6 +58,20 @@ def fetch_yfinance_series(ticker, start):
         df.columns = df.columns.get_level_values(0)
     df.index.name = 'Date'
     return df
+
+
+def fetch_domestic_index(code, start_str, end_str, start_iso):
+    """국내 지수는 pykrx를 우선 시도하고, 실패하거나 빈 결과면 yfinance로 자동 폴백한다."""
+    try:
+        df = fetch_pykrx_index(code, start_str, end_str)
+        if not df.empty:
+            return df, 'pykrx'
+        print(f"[WARN] pykrx({code}) 가 빈 결과를 반환해 yfinance로 폴백합니다.")
+    except Exception as e:
+        print(f"[WARN] pykrx({code}) 실패({e}), yfinance로 폴백합니다.")
+
+    fallback_ticker = PYKRX_TO_YFINANCE_FALLBACK[code]
+    return fetch_yfinance_series(fallback_ticker, start_iso), 'yfinance'
 
 # 장중 스케줄러(10분마다)와 대시보드의 '지금 데이터 갱신' 버튼이 겹쳐 눌리면
 # 같은 CSV에 동시에 쓰다가 깨질 수 있어 파일 락으로 막는다.
@@ -103,8 +123,9 @@ def collect():
     end_str = datetime.now().strftime('%Y%m%d')
     for name, code in PYKRX_INDEX_SYMBOLS.items():
         try:
-            df = fetch_pykrx_index(code, start_str, end_str)
+            df, used_source = fetch_domestic_index(code, start_str, end_str, START)
             save_series_if_safe(name, df)
+            print(f"    ({name} 출처: {used_source})")
         except Exception as e:
             print(f"[FAIL] {name}: {e}")
 
