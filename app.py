@@ -285,7 +285,11 @@ def render_macro_panel():
     cols = st.columns(len(df))
     for col, (_, row) in zip(cols, df.iterrows()):
         with col:
-            st.metric(row['label'], row['value'])
+            try:
+                value_text = f"{float(row['value']):.2f}"  # FRED는 소수점을 길게 주는 경우가 있어 2자리로 정리
+            except (TypeError, ValueError):
+                value_text = row['value']
+            st.metric(row['label'], value_text)
             st.caption(f"기준일 {row['as_of']} · {row['source']}")
 
     fetched_at = df['fetched_at'].iloc[0]
