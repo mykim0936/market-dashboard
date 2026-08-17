@@ -10,6 +10,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -59,7 +60,12 @@ CHART_SERIES = [
     ('나스닥', 'nasdaq.csv', 'yfinance', '^IXIC'),
     ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
 ]
-CHART_YEARS = 5
+
+# 카드는 최근 종가/전일 대비만 필요하므로 라이브 조회 시 짧게 받아 가볍게 유지한다.
+CARD_LOOKBACK_YEARS = 1
+# 차트는 2000년 근처부터 전체 기간을 넘기고, 화면에서는 마우스 스크롤/드래그로
+# 확대·축소하며 보게 한다(로컬 CSV는 collect.py가 2001-01-01부터 받아두므로 이미 전체 보유).
+CHART_YEARS = datetime.now().year - 2000
 
 # 차트는 상승/하락/경고 신호가 아닌 단순 추세선이므로 중립색 하나만 고정해서 쓴다.
 NEUTRAL_CHART_COLOR = '#6B7280'
@@ -264,7 +270,7 @@ def render_index_cards():
     for col, (label, filename, source, code) in zip(cols, SERIES_CONFIG):
         with col:
             try:
-                df, _ = get_series(filename, source, code, CHART_YEARS)
+                df, _ = get_series(filename, source, code, CARD_LOOKBACK_YEARS)
                 last_two = df['Close'].tail(2)
                 current = last_two.iloc[-1]
                 delta = current - last_two.iloc[-2] if len(last_two) == 2 else None
@@ -438,15 +444,24 @@ def render_briefing_panel():
 
 def render_index_charts():
     for label, filename, source, code in CHART_SERIES:
-        st.subheader(f'{label} 최근 {CHART_YEARS}년')
+        st.subheader(f'{label} 전체 기간 (마우스 스크롤로 확대, 드래그로 이동)')
         live_label = None
         try:
             df, live_label = get_series(filename, source, code, CHART_YEARS)
             if df.empty:
                 raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
-            cutoff = df.index.max() - pd.DateOffset(years=CHART_YEARS)
-            recent = df.loc[df.index >= cutoff, 'Close']
-            st.line_chart(recent, color=NEUTRAL_CHART_COLOR)
+            chart_df = df[['Close']].reset_index()
+            chart = (
+                alt.Chart(chart_df)
+                .mark_line(color=NEUTRAL_CHART_COLOR)
+                .encode(
+                    x=alt.X('Date:T', title=None),
+                    y=alt.Y('Close:Q', title=None, scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', format=',.2f')],
+                )
+                .interactive()  # 스크롤 확대/축소 + 드래그 이동을 활성화한다
+            )
+            st.altair_chart(chart, use_container_width=True)
         except Exception as e:
             st.warning(f"차트를 불러오지 못했습니다: {e}")
         # live_label 은 라이브 조회 시 실제로 쓰인 출처(폴백 포함)를 반영한다.
