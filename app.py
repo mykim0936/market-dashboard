@@ -95,14 +95,18 @@ CARD_LOOKBACK_YEARS = 1
 CHART_YEARS = datetime.now().year - 2000
 
 # 스위스 인터내셔널 스타일 팔레트 — 흰색/초록/회색/검정 네 가지만 쓴다.
-SWISS_BLACK = '#111111'
+# 배경이 검정이라 텍스트/보조색은 그 위에서 잘 읽히도록 조정한 값이다
+# (SWISS_BLACK은 순검정이 아니라 화면 배경용 짙은 무채색, SWISS_GRAY_LIGHT는
+# 검정 배경 위의 옅은 구분선/카드용 회색).
+SWISS_BLACK = '#0D0D0D'
 SWISS_WHITE = '#FFFFFF'
-SWISS_GRAY = '#6B7280'
-SWISS_GRAY_LIGHT = '#E5E7EB'
-SWISS_GREEN = '#0F7A3C'
+SWISS_GRAY = '#9CA3AF'
+SWISS_GRAY_LIGHT = '#2A2A2A'
+SWISS_GREEN = '#22C55E'
 
-# 차트는 상승/하락/경고 신호가 아닌 단순 추세선이므로 팔레트의 검정 하나만 고정해서 쓴다.
-NEUTRAL_CHART_COLOR = SWISS_BLACK
+# 차트는 상승/하락/경고 신호가 아닌 단순 추세선이므로 팔레트의 흰색 하나만 고정해서 쓴다
+# (검정 배경 위라 검정 대신 흰색을 써야 보인다).
+NEUTRAL_CHART_COLOR = SWISS_WHITE
 
 # 국내 관행에 맞춰 상승은 빨강, 하락은 파랑으로 표기한다(테마 팔레트와 별개로 유지 —
 # 등락 표시는 장식이 아니라 국내 투자자에게 익숙한 기능적 관례라 사용자가 유지를 택함).
@@ -141,28 +145,31 @@ def inject_theme_css():
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
 
     /* Streamlit이 h1~h6/버튼 등에 "Source Sans"를 직접 지정해두므로 전체 요소에
-    !important 로 걸어야 실제로 이긴다(상속만으로는 개별 태그 규칙에 밀림). */
-    html, body, * {{
+    !important 로 걸어야 실제로 이긴다(상속만으로는 개별 태그 규칙에 밀림).
+    단, [data-testid="stIconMaterial"](사이드바 접기 화살표 등 material 아이콘)는 제외해야
+    한다 — 아이콘이 리거처 글꼴(Material Symbols)의 특수 글자를 그림으로 그리는 방식이라
+    Pretendard로 바꾸면 "keyboard_double_arrow_right" 같은 원본 텍스트가 그대로 보인다. */
+    html, body, *:not([data-testid="stIconMaterial"]) {{
         font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif !important;
     }}
 
     .stApp {{
-        background-color: {SWISS_WHITE};
-        color: {SWISS_BLACK};
+        background-color: {SWISS_BLACK};
+        color: {SWISS_WHITE};
     }}
 
     /* 스위스 스타일 헤드라인: 굵게, 자간 좁게, 그리드 규칙선으로 구획 */
     h1, h2, h3 {{
         font-weight: 700 !important;
         letter-spacing: -0.02em;
-        color: {SWISS_BLACK} !important;
+        color: {SWISS_WHITE} !important;
     }}
     h2 {{
-        border-bottom: 2px solid {SWISS_BLACK};
+        border-bottom: 2px solid {SWISS_WHITE};
         padding-bottom: 0.3rem;
     }}
     h1 {{
-        border-bottom: 3px solid {SWISS_BLACK};
+        border-bottom: 3px solid {SWISS_WHITE};
         padding-bottom: 0.5rem;
     }}
 
@@ -181,7 +188,7 @@ def inject_theme_css():
     }}
 
     [data-testid="stMetric"] {{
-        background-color: {SWISS_WHITE};
+        background-color: {SWISS_BLACK};
         border: 1px solid {SWISS_GRAY_LIGHT};
         padding: 0.75rem 1rem;
     }}
@@ -192,27 +199,29 @@ def inject_theme_css():
         letter-spacing: 0.05em;
     }}
     [data-testid="stMetricValue"] {{
-        color: {SWISS_BLACK};
+        color: {SWISS_WHITE};
         font-weight: 700;
     }}
 
     /* 탭 강조색(선택된 탭 글자/밑줄)도 config.toml의 primaryColor(초록)를 그대로 쓴다. */
     [role="tab"] {{
         font-weight: 600;
+        color: {SWISS_GRAY};
     }}
 
-    /* 버튼 — 검정 바탕에 흰 글씨, 호버 시 초록(스위스 포스터의 단일 악센트 컬러) */
+    /* 버튼 — 흰 바탕에 검정 글씨(검정 배경 위에서 도드라지는 스위스 포스터식 반전 블록),
+    호버 시 초록(단일 악센트 컬러)으로 바뀐다. */
     .stButton > button, .stDownloadButton > button {{
-        background-color: {SWISS_BLACK};
-        color: {SWISS_WHITE};
-        border: 1px solid {SWISS_BLACK};
+        background-color: {SWISS_WHITE};
+        color: {SWISS_BLACK};
+        border: 1px solid {SWISS_WHITE};
         border-radius: 0;
         font-weight: 600;
     }}
     .stButton > button:hover, .stDownloadButton > button:hover {{
         background-color: {SWISS_GREEN};
         border-color: {SWISS_GREEN};
-        color: {SWISS_WHITE};
+        color: {SWISS_BLACK};
     }}
 
     /* 라디오/셀렉트 강조색(체크 표시 등)은 config.toml의 primaryColor(초록)를
@@ -689,7 +698,7 @@ def render_rs_tab():
         rs_color = UP_COLOR if outperformance >= 0 else DOWN_COLOR
         baseline = (
             alt.Chart(pd.DataFrame({'y': [100]}))
-            .mark_rule(strokeDash=[4, 4], color='#9CA3AF')
+            .mark_rule(strokeDash=[4, 4], color=SWISS_GRAY)
             .encode(y='y:Q')
         )
         rs_line = (

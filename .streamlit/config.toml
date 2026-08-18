@@ -2,9 +2,9 @@
 # inject_theme_css()에서 CSS로 얹는다. 여기서는 Streamlit 기본 위젯(라디오/탭/버튼
 # 강조색 등)이 참조하는 기본 팔레트만 지정한다.
 [theme]
-base = "light"
-primaryColor = "#0F7A3C"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F2F2F2"
-textColor = "#111111"
+base = "dark"
+primaryColor = "#22C55E"
+backgroundColor = "#0D0D0D"
+secondaryBackgroundColor = "#2A2A2A"
+textColor = "#FFFFFF"
 font = "sans serif"
