@@ -442,6 +442,20 @@ def fetch_per_universe(market):
     return pd.DataFrame(columns=['PER', '업종명'])
 
 
+def diagnose_pykrx():
+    """진단용 — fetch_per_universe는 실패 사유를 다 삼켜버리므로, 실제 원인(로그인
+    실패/네트워크 차단/데이터 없음)을 구분하려면 이걸로 직접 확인한다."""
+    result = {}
+    d = datetime.now().strftime('%Y%m%d')
+    try:
+        df = pykrx_stock.get_market_fundamental(d, market='KOSPI')
+        result['row_count'] = len(df)
+        result['columns'] = list(df.columns)
+    except Exception as e:
+        result['exception'] = f'{type(e).__name__}: {e}'
+    return result
+
+
 def attach_per_columns(stocks):
     """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
     - 자기 PER: DART Open API로 확인한 EPS가 있으면 (오늘 현재가 / DART EPS)로
@@ -723,6 +737,9 @@ def render_stock_detail_panel():
         corp_map = fetch_dart_corp_map()
         st.write(f'corp_code 매핑 개수: {len(corp_map)}건 (0이면 corpCode.xml 다운로드/파싱 실패)')
         st.write(f'아이쓰리시스템(214430) corp_code: {corp_map.get("214430", "매핑 없음")}')
+
+        st.caption('pykrx 직접 호출 진단 (코스피 전체 PER/업종 벌크 조회):')
+        st.json(diagnose_pykrx())
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
