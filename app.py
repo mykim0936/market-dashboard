@@ -94,10 +94,18 @@ CARD_LOOKBACK_YEARS = 1
 # 확대·축소하며 보게 한다(로컬 CSV는 collect.py가 2001-01-01부터 받아두므로 이미 전체 보유).
 CHART_YEARS = datetime.now().year - 2000
 
-# 차트는 상승/하락/경고 신호가 아닌 단순 추세선이므로 중립색 하나만 고정해서 쓴다.
-NEUTRAL_CHART_COLOR = '#6B7280'
+# 스위스 인터내셔널 스타일 팔레트 — 흰색/초록/회색/검정 네 가지만 쓴다.
+SWISS_BLACK = '#111111'
+SWISS_WHITE = '#FFFFFF'
+SWISS_GRAY = '#6B7280'
+SWISS_GRAY_LIGHT = '#E5E7EB'
+SWISS_GREEN = '#0F7A3C'
 
-# 국내 관행에 맞춰 상승은 빨강, 하락은 파랑으로 표기한다.
+# 차트는 상승/하락/경고 신호가 아닌 단순 추세선이므로 팔레트의 검정 하나만 고정해서 쓴다.
+NEUTRAL_CHART_COLOR = SWISS_BLACK
+
+# 국내 관행에 맞춰 상승은 빨강, 하락은 파랑으로 표기한다(테마 팔레트와 별개로 유지 —
+# 등락 표시는 장식이 아니라 국내 투자자에게 익숙한 기능적 관례라 사용자가 유지를 택함).
 UP_COLOR = '#D32F2F'
 DOWN_COLOR = '#1565C0'
 
@@ -120,6 +128,106 @@ BRIEFING_TTL_SEC = 900
 
 REFRESH_OPTIONS = {'끔': None, '30초': 30, '1분': 60, '5분': 300}
 QUICK_REFRESH_TIMEOUT_SEC = 300
+
+
+# --- 테마 (Pretendard + 스위스 인터내셔널 스타일) --------------------------
+
+def inject_theme_css():
+    """폰트는 Pretendard, 스타일은 스위스 인터내셔널(그리드형 레이아웃, 각진 모서리,
+    그림자 없음, 좌측 정렬, 헤어라인 규칙선)을 따르고 흰색/초록/회색/검정 네 색만 쓴다.
+    Streamlit 위젯은 커스텀 CSS 클래스가 없어 data-testid/data-baseweb 속성을 건다."""
+    st.markdown(f"""
+    <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css');
+
+    /* Streamlit이 h1~h6/버튼 등에 "Source Sans"를 직접 지정해두므로 전체 요소에
+    !important 로 걸어야 실제로 이긴다(상속만으로는 개별 태그 규칙에 밀림). */
+    html, body, * {{
+        font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif !important;
+    }}
+
+    .stApp {{
+        background-color: {SWISS_WHITE};
+        color: {SWISS_BLACK};
+    }}
+
+    /* 스위스 스타일 헤드라인: 굵게, 자간 좁게, 그리드 규칙선으로 구획 */
+    h1, h2, h3 {{
+        font-weight: 700 !important;
+        letter-spacing: -0.02em;
+        color: {SWISS_BLACK} !important;
+    }}
+    h2 {{
+        border-bottom: 2px solid {SWISS_BLACK};
+        padding-bottom: 0.3rem;
+    }}
+    h1 {{
+        border-bottom: 3px solid {SWISS_BLACK};
+        padding-bottom: 0.5rem;
+    }}
+
+    hr {{
+        border: none;
+        border-top: 1px solid {SWISS_GRAY_LIGHT};
+        margin: 1.5rem 0;
+    }}
+
+    /* 그림자·둥근 모서리 제거 — 스위스 스타일은 평면적이고 각져 있다 */
+    [data-testid="stMetric"], [data-testid="stExpander"], .stAlert,
+    [data-testid="stDataFrame"], div[data-baseweb="select"] > div,
+    div[data-baseweb="input"] > div {{
+        border-radius: 0 !important;
+        box-shadow: none !important;
+    }}
+
+    [data-testid="stMetric"] {{
+        background-color: {SWISS_WHITE};
+        border: 1px solid {SWISS_GRAY_LIGHT};
+        padding: 0.75rem 1rem;
+    }}
+    [data-testid="stMetricLabel"] {{
+        color: {SWISS_GRAY};
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.05em;
+    }}
+    [data-testid="stMetricValue"] {{
+        color: {SWISS_BLACK};
+        font-weight: 700;
+    }}
+
+    /* 탭 강조색(선택된 탭 글자/밑줄)도 config.toml의 primaryColor(초록)를 그대로 쓴다. */
+    [role="tab"] {{
+        font-weight: 600;
+    }}
+
+    /* 버튼 — 검정 바탕에 흰 글씨, 호버 시 초록(스위스 포스터의 단일 악센트 컬러) */
+    .stButton > button, .stDownloadButton > button {{
+        background-color: {SWISS_BLACK};
+        color: {SWISS_WHITE};
+        border: 1px solid {SWISS_BLACK};
+        border-radius: 0;
+        font-weight: 600;
+    }}
+    .stButton > button:hover, .stDownloadButton > button:hover {{
+        background-color: {SWISS_GREEN};
+        border-color: {SWISS_GREEN};
+        color: {SWISS_WHITE};
+    }}
+
+    /* 라디오/셀렉트 강조색(체크 표시 등)은 config.toml의 primaryColor(초록)를
+    Streamlit이 기본적으로 그대로 써서 별도 CSS 없이도 이미 초록으로 나온다. */
+
+    section[data-testid="stSidebar"] {{
+        background-color: {SWISS_GRAY_LIGHT};
+        border-right: 1px solid {SWISS_GRAY};
+    }}
+
+    [data-testid="stCaptionContainer"], .stCaption {{
+        color: {SWISS_GRAY} !important;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
 
 
 # --- 비밀번호 게이트 -------------------------------------------------------
@@ -715,6 +823,7 @@ def render_fx_news_live():
 
 def main():
     st.set_page_config(page_title='시장 대시보드', layout='wide')
+    inject_theme_css()
 
     if not check_password():
         return
