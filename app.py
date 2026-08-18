@@ -30,7 +30,14 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_KEY', 'OPENDART_API_KEY'):
+# KRX_ID/KRX_PW 는 pykrx가 import 시점에 자동으로 로그인 시도하며 읽는 값이다 —
+# 로컬은 Windows 사용자 환경변수로 이미 있지만 클라우드는 여기로 브리지해야
+# pykrx가 인증된 상태로 동작한다(없으면 비로그인 상태라 일부 대량 조회 —
+# 업계 PER 계산용 시장 전체 PER/업종 데이터 등 — 가 막힐 수 있다).
+for _key in (
+    'ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_KEY', 'OPENDART_API_KEY',
+    'KRX_ID', 'KRX_PW',
+):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -461,7 +468,12 @@ def attach_per_columns(stocks):
                 universes[market] = fetch_per_universe(market)
             universe = universes[market]
 
-        eps, _, _ = fetch_dart_eps_cached(ticker)
+        try:
+            eps, _, _ = fetch_dart_eps_cached(ticker)
+        except Exception:
+            # DART 쪽이 죽어도(네트워크 장애 등) 아래 pykrx 기반 PER·업계 PER
+            # 계산까지 같이 죽지 않게 여기서 막는다.
+            eps = None
         if eps is not None:
             stock_per = current_price / eps if eps > 0 and current_price else None
         elif universe is not None and not universe.empty and ticker in universe.index:

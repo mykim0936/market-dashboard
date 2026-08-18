@@ -20,15 +20,20 @@ def _api_key():
 
 
 def _get(endpoint, params):
-    """반환값은 status="000"(정상)일 때만 list, 그 외(키 없음/자료 없음/오류)는 None."""
+    """반환값은 status="000"(정상)일 때만 list, 그 외(키 없음/자료 없음/네트워크 오류/
+    HTTP 오류/DART 오류코드)는 전부 None — 호출부가 매번 try/except를 안 써도
+    되게 여기서 모든 실패를 흡수한다."""
     api_key = _api_key()
     if not api_key:
         return None
     params = dict(params)
     params['crtfc_key'] = api_key
-    resp = requests.get(f'{DART_API_BASE}/{endpoint}', params=params, timeout=DART_TIMEOUT_SEC)
-    resp.raise_for_status()
-    data = resp.json()
+    try:
+        resp = requests.get(f'{DART_API_BASE}/{endpoint}', params=params, timeout=DART_TIMEOUT_SEC)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.exceptions.RequestException, ValueError):
+        return None
     if data.get('status') != '000':
         return None
     return data.get('list', [])
