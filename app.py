@@ -77,6 +77,17 @@ RS_PERIODS = {
     '1년': lambda now: now - pd.DateOffset(years=1),
 }
 
+# 지수/환율 차트에서 고를 수 있는 기간 — None은 "전체 기간"(필터링 없음)을 뜻한다.
+CHART_PERIODS = {
+    '1주일': lambda now: now - pd.DateOffset(weeks=1),
+    '1개월': lambda now: now - pd.DateOffset(months=1),
+    '3개월': lambda now: now - pd.DateOffset(months=3),
+    '6개월': lambda now: now - pd.DateOffset(months=6),
+    '1년': lambda now: now - pd.DateOffset(years=1),
+    '5년': lambda now: now - pd.DateOffset(years=5),
+    '전체': None,
+}
+
 # 카드는 최근 종가/전일 대비만 필요하므로 라이브 조회 시 짧게 받아 가볍게 유지한다.
 CARD_LOOKBACK_YEARS = 1
 # 차트는 2000년 근처부터 전체 기간을 넘기고, 화면에서는 마우스 스크롤/드래그로
@@ -468,12 +479,22 @@ def render_briefing_panel():
 
 def render_index_charts(series_list):
     for label, filename, source, code in series_list:
-        st.subheader(f'{label} 전체 기간')
+        st.subheader(label)
+        selected_period = st.radio(
+            f'{label} 기간', list(CHART_PERIODS),
+            index=len(CHART_PERIODS) - 1,  # 기본값 '전체' — 이전까지의 동작을 그대로 유지
+            horizontal=True, key=f'chart_period_{filename}', label_visibility='collapsed',
+        )
         live_label = None
         try:
             df, live_label = get_series(filename, source, code, CHART_YEARS)
             if df.empty:
                 raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
+            period_start = CHART_PERIODS[selected_period]
+            if period_start is not None:
+                df = df[df.index >= period_start(pd.Timestamp.now()).normalize()]
+                if df.empty:
+                    raise ValueError('선택한 기간에 해당하는 데이터가 없습니다')
             chart_df = df[['Close']].reset_index()
             chart = (
                 alt.Chart(chart_df)
