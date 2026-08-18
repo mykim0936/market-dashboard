@@ -372,6 +372,75 @@ def get_holdings_from_secrets():
     return df
 
 
+# PER은 하루 안에 거의 안 바뀌고, 시장 전체 종목의 PER/업종을 한 번에 받아오는
+# 무거운 호출이라 지수/시세보다 훨씬 길게 캐시한다.
+PER_TTL_SEC = 3600
+PER_LOOKBACK_DAYS = 5
+
+
+@st.cache_data(ttl=PER_TTL_SEC)
+def fetch_per_universe(market):
+    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·업종명을 한 번에 받아온다 — 종목별로
+    따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은 업종 종목들의 PER
+    중앙값) 계산에 쓴다. 티커를 인덱스로 하는 DataFrame(PER, 업종명)을 반환하고,
+    최근 며칠 안에 거래일 데이터가 없으면(휴장 등) 빈 DataFrame을 반환한다."""
+    for delta in range(PER_LOOKBACK_DAYS):
+        d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
+        try:
+            fundamentals = pykrx_stock.get_market_fundamental(d, market=market)
+            sectors = pykrx_stock.get_market_sector_classifications(d, market)
+        except Exception:
+            continue
+        if not fundamentals.empty and not sectors.empty:
+            return fundamentals[['PER']].join(sectors[['업종명']], how='left')
+    return pd.DataFrame(columns=['PER', '업종명'])
+
+
+def attach_per_columns(stocks):
+    """보유 종목 각각에 자기 PER과 "업계 PER"(같은 시장·같은 업종 내 다른 종목들의
+    PER 중앙값, 적자로 PER이 의미 없는 0 이하 값은 제외)을 붙인다. ETF·상장 정보가
+    없는 종목·시장 구분이 없는 종목은 조용히 "-"(None)로 남긴다 — 표에서 이 함수
+    호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는
+    그대로 보여준다."""
+    stocks = stocks.copy()
+    per_vals, industry_names, industry_pers = [], [], []
+    universes = {}
+
+    for _, row in stocks.iterrows():
+        market = row.get('market')
+        ticker = row['ticker']
+        if market not in ('KOSPI', 'KOSDAQ'):
+            per_vals.append(None)
+            industry_names.append(None)
+            industry_pers.append(None)
+            continue
+
+        if market not in universes:
+            universes[market] = fetch_per_universe(market)
+        universe = universes[market]
+
+        if universe.empty or ticker not in universe.index:
+            per_vals.append(None)
+            industry_names.append(None)
+            industry_pers.append(None)
+            continue
+
+        stock_per = universe.loc[ticker, 'PER']
+        industry = universe.loc[ticker, '업종명']
+        per_vals.append(stock_per if stock_per and stock_per > 0 else None)
+        industry_names.append(industry)
+
+        peers = universe[
+            (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
+        ]
+        industry_pers.append(peers['PER'].median() if not peers.empty else None)
+
+    stocks['per'] = per_vals
+    stocks['industry_name'] = industry_names
+    stocks['industry_per'] = industry_pers
+    return stocks
+
+
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
 def fetch_portfolio_live():
     holdings = get_holdings_from_secrets()  # 없으면 fetch_portfolio.py가 로컬 portfolio.csv로 폴백
@@ -493,7 +562,9 @@ def style_portfolio(df):
             '평가손익': '{:+,.0f}',
             '수익률(%)': '{:+.2f}',
             '비중(%)': '{:.1f}',
-        })
+            'PER': '{:.2f}',
+            '업계 PER': '{:.2f}',
+        }, na_rep='-')
     )
 
 
@@ -509,6 +580,12 @@ def render_portfolio_panel():
 
     stocks = df[df['ticker'] != CASH_TICKER]
     cash = df[df['ticker'] == CASH_TICKER]['eval_amount'].sum()
+
+    try:
+        stocks = attach_per_columns(stocks)
+    except Exception:
+        # PER 조회(pykrx)가 막혀도 나머지 보유 종목 표는 그대로 보여준다.
+        stocks = stocks.assign(per=None, industry_name=None, industry_per=None)
 
     buy_total = stocks['buy_amount'].sum()
     eval_total = stocks['eval_amount'].sum()
@@ -539,11 +616,16 @@ def render_portfolio_panel():
         'profit': '평가손익',
         'profit_pct': '수익률(%)',
         'weight_pct': '비중(%)',
+        'per': 'PER',
+        'industry_name': '업종',
+        'industry_per': '업계 PER',
     })[['종목명', '시장', '현재가', '전일대비(%)', '수량', '평단가',
-        '매입금액', '평가금액', '평가손익', '수익률(%)', '비중(%)']]
+        '매입금액', '평가금액', '평가손익', '수익률(%)', '비중(%)',
+        'PER', '업종', '업계 PER']]
 
     # 목록 조회가 429로 막혀 개별 조회로 받아오면 시장 구분이 비어 있다.
     table['시장'] = table['시장'].fillna('-').replace('', '-')
+    table['업종'] = table['업종'].fillna('-')
 
     st.dataframe(style_portfolio(table), width='stretch', hide_index=True)
 
@@ -556,6 +638,11 @@ def render_portfolio_panel():
 
     st.caption(file_caption(PORTFOLIO_CSV, 'FinanceDataReader (KRX 종가/등락률)') +
                ' · 비중은 현금 제외 주식 평가금액 대비')
+    st.caption(
+        '업계 PER은 pykrx 기준 같은 시장(코스피/코스닥)·같은 업종 내 다른 종목들의 PER '
+        '중앙값(적자로 PER이 무의미한 종목은 제외)이며, ETF·해외 상장 종목·시장 구분이 '
+        '없는 종목은 "-"로 표시됩니다.'
+    )
 
 
 # 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
