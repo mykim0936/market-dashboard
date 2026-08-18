@@ -213,6 +213,10 @@ def inject_theme_css():
     [role="tab"] {{
         font-weight: 600;
         color: {SWISS_GRAY};
+        font-size: 1.3rem !important;
+    }}
+    [role="tab"] p {{
+        font-size: 1.3rem !important;
     }}
 
     /* 버튼 — 흰 바탕에 검정 글씨(검정 배경 위에서 도드라지는 스위스 포스터식 반전 블록),
