@@ -59,6 +59,24 @@ FX_SERIES = [
     ('원/달러', 'usdkrw.csv', 'yfinance', 'KRW=X'),
 ]
 
+# RS(상대강도) 비교 탭에서 고를 수 있는 기초지수 — (소스, 코드)는 MARKET_SERIES와 같은 규칙.
+RS_BENCHMARKS = {
+    '코스피': ('pykrx', '1001'),
+    '코스닥': ('pykrx', '2001'),
+    'S&P500': ('yfinance', '^GSPC'),
+    '나스닥100': ('yfinance', '^NDX'),
+}
+
+# RS 비교 기간 — 각각 "지금부터 이만큼 전"의 시작일을 계산하는 함수.
+RS_PERIODS = {
+    '1주일': lambda now: now - pd.DateOffset(weeks=1),
+    '1개월': lambda now: now - pd.DateOffset(months=1),
+    '3개월': lambda now: now - pd.DateOffset(months=3),
+    '6개월': lambda now: now - pd.DateOffset(months=6),
+    'YTD': lambda now: pd.Timestamp(year=now.year, month=1, day=1),
+    '1년': lambda now: now - pd.DateOffset(years=1),
+}
+
 # 카드는 최근 종가/전일 대비만 필요하므로 라이브 조회 시 짧게 받아 가볍게 유지한다.
 CARD_LOOKBACK_YEARS = 1
 # 차트는 2000년 근처부터 전체 기간을 넘기고, 화면에서는 마우스 스크롤/드래그로
@@ -146,11 +164,11 @@ def fetch_yfinance_df(ticker, start_dt):
 
 
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
-def load_series_live(source, code, years):
+def load_series_live(source, code, start_dt):
     """반환값은 (df, 실제로 쓰인 출처 라벨) — 국내 지수는 pykrx를 우선 시도하고
-    실패하면 yfinance로 자동 폴백하므로, 캡션에 실제 출처를 보여주려면 라벨도 같이 받아야 한다."""
-    start_dt = datetime.now() - pd.DateOffset(years=years)
-
+    실패하면 yfinance로 자동 폴백하므로, 캡션에 실제 출처를 보여주려면 라벨도 같이 받아야 한다.
+    start_dt 는 정확한 시작 시점(datetime/Timestamp) — RS 비교 탭처럼 "1주일 전부터"
+    같은 정확한 기간이 필요한 경우도 있어 연 단위가 아니라 날짜를 직접 받는다."""
     if source == 'pykrx':
         try:
             df = pykrx_stock.get_index_ohlcv_by_date(
@@ -172,7 +190,8 @@ def get_series(filename, source, code, years):
     path = os.path.join(DATA_DIR, filename)
     if os.path.exists(path):
         return load_series(filename), None
-    return load_series_live(source, code, years)
+    start_dt = datetime.now() - pd.DateOffset(years=years)
+    return load_series_live(source, code, start_dt)
 
 
 @st.cache_data(ttl=CACHE_TTL_SEC)
@@ -231,6 +250,12 @@ def get_portfolio_df():
         return fetch_portfolio_live()
     except FileNotFoundError:
         return None  # Secrets도 없고 로컬 portfolio.csv도 없는 경우
+
+
+@st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
+def fetch_stock_series(ticker, start_dt):
+    """RS 비교 탭용 — 보유 종목 개별 시계열(FDR, 지수 라이브 조회와 별개 경로)."""
+    return fetch_portfolio.fetch_price_history(ticker, start_dt.strftime('%Y-%m-%d'))
 
 
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
@@ -443,7 +468,7 @@ def render_briefing_panel():
 
 def render_index_charts(series_list):
     for label, filename, source, code in series_list:
-        st.subheader(f'{label} 전체 기간 (마우스 스크롤로 확대, 드래그로 이동)')
+        st.subheader(f'{label} 전체 기간')
         live_label = None
         try:
             df, live_label = get_series(filename, source, code, CHART_YEARS)
@@ -467,6 +492,94 @@ def render_index_charts(series_list):
         # 로컬 CSV를 읽었을 때는 None 이므로 설정된 기본 출처로 표시한다.
         source_label = live_label or ('pykrx (KRX)' if source == 'pykrx' else 'yfinance')
         st.caption(file_caption(os.path.join(DATA_DIR, filename), source_label))
+
+
+def render_rs_tab():
+    """보유 종목이 선택한 기간·기초지수 대비 상대적으로 잘했는지(RS, 상대강도)를 본다.
+    RS = (종목 정규화 지수 / 벤치마크 정규화 지수) x 100 — 시작일을 100으로 맞추고,
+    RS 선이 100보다 위면 벤치마크 대비 아웃퍼폼, 아래면 언더퍼폼이라는 뜻이다."""
+    st.subheader('RS 비교 (보유 종목 vs 지수)')
+
+    portfolio_df = get_portfolio_df()
+    if portfolio_df is None or portfolio_df.empty:
+        st.info('보유 종목이 없어 RS 비교를 할 수 없습니다. portfolio.csv 를 채워주세요.')
+        return
+    holdings = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
+    if holdings.empty:
+        st.info('보유 종목이 없어 RS 비교를 할 수 없습니다.')
+        return
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        selected_name = st.selectbox('보유 종목', holdings['name'].tolist(), key='rs_stock')
+    with col2:
+        selected_period = st.selectbox('기간', list(RS_PERIODS), index=3, key='rs_period')
+    with col3:
+        selected_benchmark = st.selectbox('기초지수', list(RS_BENCHMARKS), key='rs_benchmark')
+
+    ticker = str(holdings.loc[holdings['name'] == selected_name, 'ticker'].iloc[0])
+    now = pd.Timestamp.now()
+    start_dt = RS_PERIODS[selected_period](now)
+    bench_source, bench_code = RS_BENCHMARKS[selected_benchmark]
+
+    try:
+        with st.spinner('RS 계산 중...'):
+            stock_df = fetch_stock_series(ticker, start_dt)
+            bench_df, _ = load_series_live(bench_source, bench_code, start_dt)
+
+        if stock_df.empty or bench_df.empty:
+            st.warning('선택한 종목 또는 지수의 데이터를 불러오지 못했습니다.')
+            return
+
+        merged = pd.DataFrame({'stock': stock_df['Close'], 'bench': bench_df['Close']}).dropna()
+        merged = merged[merged.index >= start_dt.normalize()]
+        if len(merged) < 2:
+            st.warning('선택한 기간에 비교할 데이터가 부족합니다. 더 긴 기간을 선택해 보세요.')
+            return
+
+        stock_norm = merged['stock'] / merged['stock'].iloc[0] * 100
+        bench_norm = merged['bench'] / merged['bench'].iloc[0] * 100
+        rs = (stock_norm / bench_norm * 100).rename('RS')
+
+        stock_return = stock_norm.iloc[-1] - 100
+        bench_return = bench_norm.iloc[-1] - 100
+        outperformance = stock_return - bench_return
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f'{selected_name} 수익률', f'{stock_return:+.2f}%')
+        c2.metric(f'{selected_benchmark} 수익률', f'{bench_return:+.2f}%')
+        c3.metric(
+            '상대 성과',
+            f'{outperformance:+.2f}%p',
+            delta='아웃퍼폼' if outperformance > 0 else ('언더퍼폼' if outperformance < 0 else '동일'),
+            delta_color='off',
+        )
+
+        chart_df = rs.reset_index()
+        chart_df.columns = ['Date', 'RS']
+        rs_color = UP_COLOR if outperformance >= 0 else DOWN_COLOR
+        baseline = (
+            alt.Chart(pd.DataFrame({'y': [100]}))
+            .mark_rule(strokeDash=[4, 4], color='#9CA3AF')
+            .encode(y='y:Q')
+        )
+        rs_line = (
+            alt.Chart(chart_df)
+            .mark_line(color=rs_color)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('RS:Q', title=None, scale=alt.Scale(zero=False)),
+                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('RS:Q', format=',.2f')],
+            )
+            .interactive()
+        )
+        st.altair_chart(baseline + rs_line, use_container_width=True)
+        st.caption(
+            f'{selected_name} vs {selected_benchmark} · 시작일 = 100 기준 RS. '
+            '100보다 위에 있으면 지수보다 잘한 것, 아래면 못한 것이다.'
+        )
+    except Exception as e:
+        st.warning(f'RS를 계산하지 못했습니다: {e}')
 
 
 def humanize_age(published_at, now):
@@ -589,8 +702,8 @@ def main():
 
     interval = render_sidebar()
 
-    tab_market, tab_portfolio, tab_fx_news = st.tabs(
-        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스']
+    tab_market, tab_portfolio, tab_fx_news, tab_rs = st.tabs(
+        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스', 'RS 비교']
     )
 
     # 탭별로 "값이 자주 바뀌는 패널"(카드/지표/뉴스)만 자동 새로고침하고, 브리핑·장기
@@ -611,6 +724,11 @@ def main():
         st.fragment(run_every=interval)(render_fx_news_live)()
         st.divider()
         render_index_charts(FX_SERIES)
+
+    with tab_rs:
+        # 사용자가 종목/기간/지수를 고르는 상호작용 탭이라 자동 새로고침 대상이 아니다
+        # (자동 리런이 선택값을 방해하지 않게).
+        render_rs_tab()
 
 
 if __name__ == '__main__':

@@ -157,6 +157,12 @@ def add_weights(rows):
     return rows
 
 
+def fetch_price_history(ticker, start):
+    """RS 비교 탭 등에서 보유 종목의 시계열(Close 포함 DataFrame)이 필요할 때 쓴다.
+    start 는 'YYYY-MM-DD' 문자열 또는 datetime."""
+    return fdr.DataReader(ticker, start)
+
+
 def compute_portfolio_rows(holdings=None):
     """app.py 에서 직접 호출하는 라이브러리 진입점. CSV로 저장하지 않고 바로 반환한다.
     holdings 를 안 넘기면 로컬 portfolio.csv 에서 읽는다 — 클라우드 배포본은 이 파일이
