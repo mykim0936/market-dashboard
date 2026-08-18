@@ -46,19 +46,17 @@ DATA_DIR = 'data'
 
 # (label, 파일명, 소스, 코드) — 국내 지수는 pykrx, 해외 지수·환율은 yfinance를 쓴다
 # (collect.py 와 동일한 소스 구성. 2026-08-18 FinanceDataReader에서 교체).
-SERIES_CONFIG = [
+# 탭 구성: "전체 시장현황" 탭은 지수(MARKET_SERIES), "환율 및 뉴스" 탭은 환율(FX_SERIES).
+# 카드와 차트가 같은 목록을 쓰므로(환율만 별도 목록) 하나로 통일해 중복을 없앴다.
+MARKET_SERIES = [
     ('코스피', 'kospi.csv', 'pykrx', '1001'),
     ('코스닥', 'kosdaq.csv', 'pykrx', '2001'),
-    ('원/달러', 'usdkrw.csv', 'yfinance', 'KRW=X'),
     ('나스닥', 'nasdaq.csv', 'yfinance', '^IXIC'),
     ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
 ]
 
-CHART_SERIES = [
-    ('코스피', 'kospi.csv', 'pykrx', '1001'),
-    ('코스닥', 'kosdaq.csv', 'pykrx', '2001'),
-    ('나스닥', 'nasdaq.csv', 'yfinance', '^IXIC'),
-    ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
+FX_SERIES = [
+    ('원/달러', 'usdkrw.csv', 'yfinance', 'KRW=X'),
 ]
 
 # 카드는 최근 종가/전일 대비만 필요하므로 라이브 조회 시 짧게 받아 가볍게 유지한다.
@@ -264,10 +262,10 @@ def file_caption(path, source):
 
 # --- 패널 ----------------------------------------------------------------
 
-def render_index_cards():
-    st.subheader('지수 현황')
-    cols = st.columns(len(SERIES_CONFIG))
-    for col, (label, filename, source, code) in zip(cols, SERIES_CONFIG):
+def render_index_cards(series_list, title):
+    st.subheader(title)
+    cols = st.columns(len(series_list))
+    for col, (label, filename, source, code) in zip(cols, series_list):
         with col:
             try:
                 df, _ = get_series(filename, source, code, CARD_LOOKBACK_YEARS)
@@ -283,7 +281,8 @@ def render_index_cards():
             except Exception as e:
                 st.metric(label, '-')
                 st.caption(f"로드 실패: {e}")
-    st.caption(file_caption(os.path.join(DATA_DIR, 'kospi.csv'), 'pykrx / yfinance') + ' · 전일 대비')
+    ref_filename = series_list[0][1]
+    st.caption(file_caption(os.path.join(DATA_DIR, ref_filename), 'pykrx / yfinance') + ' · 전일 대비')
 
 
 def render_macro_panel():
@@ -442,8 +441,8 @@ def render_briefing_panel():
     )
 
 
-def render_index_charts():
-    for label, filename, source, code in CHART_SERIES:
+def render_index_charts(series_list):
+    for label, filename, source, code in series_list:
         st.subheader(f'{label} 전체 기간 (마우스 스크롤로 확대, 드래그로 이동)')
         live_label = None
         try:
@@ -558,14 +557,24 @@ def render_sidebar():
         return REFRESH_OPTIONS[choice]
 
 
-def render_live_panels():
-    """자동 새로고침 대상 — 값이 자주 바뀌는 패널만 모아둔다."""
+def render_market_live():
+    """"전체 시장현황" 탭의 자동 새로고침 대상 — 지수 카드·거시 지표."""
     st.caption(f"화면 갱신 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    render_index_cards()
+    render_index_cards(MARKET_SERIES, '지수 현황')
     st.divider()
     render_macro_panel()
-    st.divider()
+
+
+def render_portfolio_live():
+    """"내 계좌 포트폴리오" 탭의 자동 새로고침 대상."""
+    st.caption(f"화면 갱신 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     render_portfolio_panel()
+
+
+def render_fx_news_live():
+    """"환율 및 뉴스" 탭의 자동 새로고침 대상 — 환율 카드·뉴스."""
+    st.caption(f"화면 갱신 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    render_index_cards(FX_SERIES, '환율')
     st.divider()
     render_news_panel()
 
@@ -580,15 +589,28 @@ def main():
 
     interval = render_sidebar()
 
-    # 정보 설계 순서: 지수 -> 거시 -> 보유 종목 -> 뉴스 (여기까지 자동 갱신)
-    #                 -> 브리핑 -> 장기 차트 (수동 갱신으로 충분)
-    # run_every 값이 라디오 선택에 따라 달라져야 해서 데코레이터를 런타임에 적용한다.
-    st.fragment(run_every=interval)(render_live_panels)()
+    tab_market, tab_portfolio, tab_fx_news = st.tabs(
+        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스']
+    )
 
-    st.divider()
-    render_briefing_panel()
-    st.divider()
-    render_index_charts()
+    # 탭별로 "값이 자주 바뀌는 패널"(카드/지표/뉴스)만 자동 새로고침하고, 브리핑·장기
+    # 차트는 무겁거나(26년치) 유료 호출이라 수동 갱신(새로고침 버튼/페이지 새로고침)으로
+    # 충분하다는 원래 설계를 탭 안에서도 그대로 유지한다.
+    # run_every 값이 라디오 선택에 따라 달라져야 해서 데코레이터를 런타임에 적용한다.
+    with tab_market:
+        st.fragment(run_every=interval)(render_market_live)()
+        st.divider()
+        render_briefing_panel()
+        st.divider()
+        render_index_charts(MARKET_SERIES)
+
+    with tab_portfolio:
+        st.fragment(run_every=interval)(render_portfolio_live)()
+
+    with tab_fx_news:
+        st.fragment(run_every=interval)(render_fx_news_live)()
+        st.divider()
+        render_index_charts(FX_SERIES)
 
 
 if __name__ == '__main__':
