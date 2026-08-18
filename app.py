@@ -391,6 +391,81 @@ DART_EPS = {
     '051980': {'eps': None, 'source': '2025 사업보고서 연결(CFS) — 순손실(EPS -53원)'},     # 중앙첨단소재
 }
 
+# 종목 상세 패널용 — DART 사업보고서에서 playmcp opendart 도구로 직접 확인한 연간
+# 매출액·영업이익(억원). DART_EPS와 마찬가지로 자동 조회가 아니므로 보유 종목이
+# 바뀌면 다시 확인해서 채워야 한다. 설립/분할 첫해처럼 12개월치가 아닌 해는
+# 'partial'에 기간을 적어두고, 정규화·추이 계산의 기준 연도로는 쓰지 않는다.
+DART_FINANCIALS = {
+    '214430': {  # 아이쓰리시스템 — OFS(연결 미제출)
+        'source': 'DART 사업보고서 개별(OFS, 연결 미제출)',
+        'years': [
+            {'year': 2017, 'revenue': 696.1, 'operating_income': 92.2},
+            {'year': 2018, 'revenue': 691.6, 'operating_income': 89.9},
+            {'year': 2019, 'revenue': 518.6, 'operating_income': -24.0},
+            {'year': 2020, 'revenue': 665.3, 'operating_income': 7.7},
+            {'year': 2021, 'revenue': 797.2, 'operating_income': 14.1},
+            {'year': 2022, 'revenue': 838.5, 'operating_income': 56.9},
+            {'year': 2023, 'revenue': 1215.4, 'operating_income': 122.0},
+            {'year': 2024, 'revenue': 1207.0, 'operating_income': 147.6},
+            {'year': 2025, 'revenue': 1242.8, 'operating_income': 164.6},
+        ],
+    },
+    '050890': {  # 쏠리드 — CFS
+        'source': 'DART 사업보고서 연결(CFS)',
+        'years': [
+            {'year': 2017, 'revenue': 2537.4, 'operating_income': 209.1},
+            {'year': 2018, 'revenue': 2225.8, 'operating_income': 10.6},
+            {'year': 2019, 'revenue': 2292.8, 'operating_income': -35.2},
+            {'year': 2020, 'revenue': 1711.5, 'operating_income': -157.1},
+            {'year': 2021, 'revenue': 2122.6, 'operating_income': 61.3},
+            {'year': 2022, 'revenue': 2797.9, 'operating_income': 285.9},
+            {'year': 2023, 'revenue': 3213.6, 'operating_income': 362.7},
+            {'year': 2024, 'revenue': 3310.7, 'operating_income': 351.4},
+            {'year': 2025, 'revenue': 2948.3, 'operating_income': 332.8},
+        ],
+    },
+    '457190': {  # 이수스페셜티케미컬 — CFS, 2023년 5월 분할설립
+        'source': 'DART 사업보고서 연결(CFS) — 2023년 5월 분할설립',
+        'years': [
+            {'year': 2023, 'revenue': 1175.3, 'operating_income': -61.2, 'partial': '5~12월(8개월, 설립 첫해)'},
+            {'year': 2024, 'revenue': 3320.7, 'operating_income': 142.1},
+            {'year': 2025, 'revenue': 4114.7, 'operating_income': 16.2},
+        ],
+    },
+    '348370': {  # 엔켐 — CFS
+        'source': 'DART 사업보고서 연결(CFS)',
+        'years': [
+            {'year': 2020, 'revenue': 1388.9, 'operating_income': 125.3},
+            {'year': 2021, 'revenue': 2143.3, 'operating_income': -259.7},
+            {'year': 2022, 'revenue': 5097.9, 'operating_income': 153.6},
+            {'year': 2023, 'revenue': 4246.9, 'operating_income': 51.2},
+            {'year': 2024, 'revenue': 3657.1, 'operating_income': -504.0},
+            {'year': 2025, 'revenue': 3127.9, 'operating_income': -783.9},
+        ],
+    },
+    '489790': {  # 한화비전 — CFS, 2024년 9월 분할설립(한화테크윈 비전부문)
+        'source': 'DART 사업보고서 연결(CFS) — 2024년 9월 분할설립',
+        'years': [
+            {'year': 2024, 'revenue': 4933.2, 'operating_income': 54.7, 'partial': '9~12월(4개월, 설립 첫해)'},
+            {'year': 2025, 'revenue': 17909.2, 'operating_income': 1622.7},
+        ],
+    },
+    '051980': {  # 중앙첨단소재 — CFS
+        'source': 'DART 사업보고서 연결(CFS)',
+        'years': [
+            {'year': 2017, 'revenue': 71.6, 'operating_income': -5.6},
+            {'year': 2018, 'revenue': 112.4, 'operating_income': -23.4},
+            {'year': 2019, 'revenue': 97.8, 'operating_income': -85.1},
+            {'year': 2020, 'revenue': 107.6, 'operating_income': -79.6},
+            {'year': 2021, 'revenue': 130.3, 'operating_income': -46.4},
+            {'year': 2022, 'revenue': 290.6, 'operating_income': -54.2},
+            {'year': 2023, 'revenue': 263.0, 'operating_income': 0.6},
+            {'year': 2024, 'revenue': 186.9, 'operating_income': -78.0},
+            {'year': 2025, 'revenue': 198.1, 'operating_income': -45.6},
+        ],
+    },
+}
+
 
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
@@ -666,6 +741,106 @@ def render_portfolio_panel():
         '(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값(적자 종목 제외)입니다. '
         'ETF·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다.'
     )
+
+
+def render_stock_detail_panel():
+    """보유 종목 하나를 골라 최근 5개년 매출·영업이익·영업이익률과, 주가·연간
+    영업이익을 함께 보는 추이 그래프를 보여준다. DART_FINANCIALS에 값이 있는
+    종목만 고를 수 있다(ETF·현금·아직 DART로 확인 안 한 신규 종목은 대상 아님)."""
+    st.subheader('종목 상세')
+
+    portfolio_df = get_portfolio_df()
+    if portfolio_df is None or portfolio_df.empty:
+        st.info('보유 종목이 없어 상세 재무를 볼 수 없습니다.')
+        return
+
+    holdings = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
+    holdings = holdings[holdings['ticker'].astype(str).isin(DART_FINANCIALS)]
+    if holdings.empty:
+        st.info('상세 재무가 확인된 보유 종목이 없습니다 (ETF·현금은 대상이 아닙니다).')
+        return
+
+    selected_name = st.selectbox('상세히 볼 종목', holdings['name'].tolist(), key='detail_stock')
+    ticker = str(holdings.loc[holdings['name'] == selected_name, 'ticker'].iloc[0])
+    info = DART_FINANCIALS[ticker]
+    years = info['years']
+
+    fin_df = pd.DataFrame(years)
+    fin_df['영업이익률(%)'] = fin_df['operating_income'] / fin_df['revenue'] * 100
+
+    display_df = fin_df.tail(5).rename(columns={
+        'year': '연도', 'revenue': '매출액(억원)', 'operating_income': '영업이익(억원)',
+    })[['연도', '매출액(억원)', '영업이익(억원)', '영업이익률(%)']]
+
+    st.dataframe(
+        display_df.style.format({
+            '매출액(억원)': '{:,.1f}',
+            '영업이익(억원)': '{:+,.1f}',
+            '영업이익률(%)': '{:+.1f}',
+        }),
+        hide_index=True, width='stretch',
+    )
+
+    partial_notes = [f"{y['year']}년: {y['partial']}" for y in years if y.get('partial')]
+    caption = f"출처: {info['source']} (playmcp DART로 직접 확인 — 보유 종목이 바뀌면 다시 확인 필요)"
+    if partial_notes:
+        caption += ' · 부분 실적 ' + ', '.join(partial_notes)
+    st.caption(caption)
+
+    # 부분 실적 연도(설립 첫해 등)는 12개월치가 아니라 추이·비교를 왜곡하므로
+    # 그래프에서는 제외하고, 정상 연도만으로 최근 7개년을 그린다.
+    full_years = [y for y in years if not y.get('partial')]
+    if len(full_years) < 2:
+        st.info('정상 실적 연도가 2개 미만이라 추이 그래프를 그릴 수 없습니다.')
+        return
+    chart_years = full_years[-7:]
+    start_dt = pd.Timestamp(year=chart_years[0]['year'], month=1, day=1)
+
+    try:
+        with st.spinner('주가 데이터 불러오는 중...'):
+            price_df = fetch_stock_series(ticker, start_dt)
+        if price_df.empty:
+            st.warning('주가 데이터를 불러오지 못했습니다.')
+            return
+
+        price_line = price_df[['Close']].reset_index()
+        oi_df = pd.DataFrame([
+            {'Date': pd.Timestamp(year=y['year'], month=12, day=31), '영업이익': y['operating_income']}
+            for y in chart_years
+        ])
+
+        price_chart = (
+            alt.Chart(price_line)
+            .mark_line(color=NEUTRAL_CHART_COLOR)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
+            )
+        )
+        oi_chart = (
+            alt.Chart(oi_df)
+            .mark_line(color=SWISS_GREEN, point=True)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('영업이익:Q', title='영업이익(억원)', scale=alt.Scale(zero=False)),
+                tooltip=[alt.Tooltip('Date:T', title='연도'), alt.Tooltip('영업이익:Q', format=',.1f')],
+            )
+        )
+        combo = (
+            alt.layer(price_chart, oi_chart)
+            .resolve_scale(y='independent')
+            .properties(height=320)
+            .interactive()
+        )
+        st.altair_chart(combo, use_container_width=True)
+        st.caption(
+            f'{selected_name} 주가(흰색, 왼쪽 축)와 연간 영업이익(초록, 오른쪽 축 · 각 연말 시점에 표시) '
+            f'— {chart_years[0]["year"]}~{chart_years[-1]["year"]}년. 두 값의 단위가 달라(원 vs 억원) '
+            '지수화 대신 서로 다른 축으로 함께 표시했습니다.'
+        )
+    except Exception as e:
+        st.warning(f'그래프를 그리지 못했습니다: {e}')
 
 
 # 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
@@ -999,6 +1174,9 @@ def main():
 
     with tab_portfolio:
         st.fragment(run_every=interval)(render_portfolio_live)()
+        st.divider()
+        # 종목 선택 상호작용 패널이라 자동 새로고침 대상이 아니다(RS 탭과 같은 이유).
+        render_stock_detail_panel()
 
     with tab_fx_news:
         st.fragment(run_every=interval)(render_fx_news_live)()
