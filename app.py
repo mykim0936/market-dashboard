@@ -30,7 +30,7 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'ANTHROPIC_API_KEY'):
+for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_KEY'):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -715,8 +715,8 @@ def render_stock_opinion_tab():
         '민감도)로 자동 분석합니다. 웹 검색을 포함해 1~5분 정도 걸릴 수 있습니다.'
     )
 
-    if not os.environ.get('ANTHROPIC_API_KEY'):
-        st.info('ANTHROPIC_API_KEY 가 설정되어 있지 않아 이 탭을 쓸 수 없습니다. Secrets에 키를 추가해 주세요.')
+    if not os.environ.get('OPENAI_API_KEY'):
+        st.info('OPENAI_API_KEY 가 설정되어 있지 않아 이 탭을 쓸 수 없습니다. Secrets에 키를 추가해 주세요.')
         return
 
     company_name = st.text_input(
@@ -748,7 +748,7 @@ def render_stock_opinion_tab():
         )
         st.caption(
             f'생성 시각: 방금 (같은 종목명은 최대 {STOCK_OPINION_TTL_SEC // 3600}시간 캐시) · '
-            f'출처: Anthropic API ({stock_opinion.ANTHROPIC_MODEL} + 웹 검색) · '
+            f'출처: OpenAI API ({stock_opinion.OPENAI_MODEL} + 웹 검색) · '
             '투자 판단 참고용이며 투자 책임은 본인에게 있습니다.'
         )
 

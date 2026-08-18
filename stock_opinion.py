@@ -1,21 +1,20 @@
 # stock_opinion.py — "종목 분석" 탭용 애널리스트 리포트 생성
 #
 # 사용자가 직접 작성한 "월스트리트 시니어 재무 분석가" 시스템 프롬프트를 그대로 쓴다.
-# 이 배포 환경에서 실제로 연결해줄 수 있는 도구는 Anthropic API의 서버사이드
+# 이 배포 환경에서 실제로 연결해줄 수 있는 도구는 OpenAI Responses API의 서버사이드
 # 웹 검색(web_search)뿐이므로(DART 전용 조회 도구나 pykrx/yfinance 실시간 함수 도구는
 # 없음), 그 사실만 프롬프트 끝에 짧게 덧붙인다 — 원문 지침 자체는 수정하지 않는다.
 import os
 
 import requests
 
-ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-# 리버스 DCF·Comps·시나리오까지 포함한 장문의 심층 분석이라 저렴한 Haiku 대신
-# 추론 품질이 필요한 모델을 쓴다.
-ANTHROPIC_MODEL = 'claude-sonnet-5'
-ANTHROPIC_MAX_TOKENS = 8000
-# 웹 검색 도구를 여러 번 호출하며 긴 리포트를 생성하므로 브리핑(30초)보다 훨씬 길게 잡는다.
-ANTHROPIC_TIMEOUT_SEC = 240
-WEB_SEARCH_MAX_USES = 8
+OPENAI_API_URL = 'https://api.openai.com/v1/responses'
+# 리버스 DCF·Comps·시나리오까지 포함한 장문의 심층 분석이라 웹 검색을 지원하는
+# GPT-5 계열 추론 모델을 쓴다.
+OPENAI_MODEL = 'gpt-5.6'
+OPENAI_MAX_OUTPUT_TOKENS = 8000
+# 웹 검색 도구를 여러 번 호출하며 긴 리포트를 생성하므로 넉넉하게 잡는다.
+OPENAI_TIMEOUT_SEC = 240
 
 ANALYST_SYSTEM_PROMPT = """당신은 월스트리트 투자은행 출신의 시니어 재무 분석가입니다. 그리고 비전문가가 볼 때 이해하기 어려운 용어는 이해할 수 있도록 쉽게 풀어서 알려줍니다.
 
@@ -213,80 +212,58 @@ TOOL_AVAILABILITY_NOTE = """
 SYSTEM_PROMPT = ANALYST_SYSTEM_PROMPT + TOOL_AVAILABILITY_NOTE
 
 
-# 딜 레이더·Comps 검증 등 검색을 여러 번 반복하는 긴 분석이라 한 번의 요청 안에서
-# 끝나지 않고 stop_reason "pause_turn"으로 중간에 멈출 수 있다(공식 문서 안내).
-# 이 경우 어시스턴트가 만든 내용(암호화된 검색 결과 블록 포함)을 그대로 돌려보내야
-# 이어서 진행되므로, 끝날 때까지 몇 차례 더 요청을 보낸다.
-MAX_CONTINUATIONS = 4
-
-
-def _call_api(api_key, messages):
-    resp = requests.post(
-        ANTHROPIC_API_URL,
-        headers={
-            'x-api-key': api_key,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-        },
-        json={
-            'model': ANTHROPIC_MODEL,
-            'max_tokens': ANTHROPIC_MAX_TOKENS,
-            'system': SYSTEM_PROMPT,
-            'messages': messages,
-            'tools': [{
-                'type': 'web_search_20250305',
-                'name': 'web_search',
-                'max_uses': WEB_SEARCH_MAX_USES,
-            }],
-        },
-        timeout=ANTHROPIC_TIMEOUT_SEC,
-    )
-    return resp, resp.json()
-
-
 def generate_opinion(company_name):
     """(텍스트, 에러메시지) 튜플을 반환한다 — 성공 시 에러메시지는 None,
-    실패 시 텍스트는 None."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    실패 시 텍스트는 None. OpenAI Responses API는 웹 검색이 여러 번 필요한 경우도
+    (Anthropic의 pause_turn과 달리) 한 요청 안에서 서버가 알아서 반복 수행하고
+    끝내므로 별도의 연속 요청 루프가 필요 없다 — max_output_tokens 초과로 중간에
+    잘렸는지만 확인하면 된다."""
+    api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
-        return None, 'ANTHROPIC_API_KEY가 설정되어 있지 않습니다.'
+        return None, 'OPENAI_API_KEY가 설정되어 있지 않습니다.'
 
-    messages = [{'role': 'user', 'content': f'{company_name} 분석해줘'}]
+    try:
+        resp = requests.post(
+            OPENAI_API_URL,
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+            },
+            json={
+                'model': OPENAI_MODEL,
+                'instructions': SYSTEM_PROMPT,
+                'input': f'{company_name} 분석해줘',
+                'tools': [{'type': 'web_search'}],
+                'max_output_tokens': OPENAI_MAX_OUTPUT_TOKENS,
+            },
+            timeout=OPENAI_TIMEOUT_SEC,
+        )
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        return None, f'API 호출 실패: {e}'
+    except ValueError:
+        return None, 'API 응답을 해석하지 못했습니다.'
+
+    if resp.status_code != 200:
+        message = data.get('error', {}).get('message') or f'HTTP {resp.status_code}'
+        return None, message
+
     text_blocks = []
-    data = {}
-
-    for i in range(MAX_CONTINUATIONS + 1):
-        try:
-            resp, data = _call_api(api_key, messages)
-        except requests.exceptions.RequestException as e:
-            return None, f'API 호출 실패: {e}'
-        except ValueError:
-            return None, 'API 응답을 해석하지 못했습니다.'
-
-        if resp.status_code != 200:
-            message = data.get('error', {}).get('message') or f'HTTP {resp.status_code}'
-            return None, message
-
-        if data.get('stop_reason') == 'refusal':
-            return None, '모델이 분석을 거부했습니다.'
-
-        content = data.get('content', [])
-        text_blocks.extend(b['text'] for b in content if b.get('type') == 'text')
-
-        if data.get('stop_reason') != 'pause_turn':
-            break
-        if i == MAX_CONTINUATIONS:
-            text_blocks.append('\n\n[참고: 검색이 길어져 응답이 중간에 끊겼을 수 있습니다.]')
-            break
-        # pause_turn: 어시스턴트가 만든 내용을 그대로(검색 결과의 encrypted_content
-        # 포함) 돌려보내야 API가 이어서 진행한다.
-        messages = messages + [{'role': 'assistant', 'content': content}]
+    incomplete = data.get('status') == 'incomplete'
+    for item in data.get('output', []):
+        if item.get('type') != 'message':
+            continue
+        if item.get('status') == 'incomplete':
+            incomplete = True
+        for block in item.get('content', []):
+            if block.get('type') == 'output_text':
+                text_blocks.append(block.get('text', ''))
 
     output = ''.join(text_blocks).strip()
     if not output:
         return None, '응답이 비어 있습니다.'
 
-    if data.get('stop_reason') == 'max_tokens':
+    if incomplete:
         output += '\n\n[참고: 응답 길이 제한에 걸려 일부 내용이 잘렸을 수 있습니다.]'
 
     return output, None

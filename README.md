@@ -80,12 +80,13 @@ python -m streamlit run app.py
    홈 화면에 아이콘으로 추가해두면 앱처럼 쓸 수 있다(iOS: 공유 → 홈 화면에 추가 /
    Android: 브라우저 메뉴 → 홈 화면에 추가).
 
-**시황 브리핑 패널**: 로컬에서는 `claude -p` CLI로 생성한다(비용 없음, Claude Code 구독 사용).
-클라우드에는 claude CLI가 없어서, 대신 **Anthropic API를 직접 호출**해 라이브로 생성한다
-(`ANTHROPIC_API_KEY`를 Secrets에 설정했을 때만 — [console.anthropic.com](https://console.anthropic.com)
-에서 발급). 비용이 드는 유료 호출이라 15분에 한 번만 실제로 호출되도록 캐시돼 있고, 짧은
-요약 작업이라 저렴한 Haiku 모델을 쓴다. 키를 설정하지 않으면 이 패널만 "설정 필요" 안내가
-뜨고 나머지 패널(지수/거시/보유종목/뉴스)은 그대로 정상 동작한다.
+**종목 분석 탭**: 종목명을 입력하면 웹 서치 도구를 켠 **OpenAI Responses API**를 직접
+호출해 월스트리트 시니어 애널리스트 프레임워크(Narrative → Reverse DCF → DCF → Comps →
+민감도 → So What) 리포트를 생성한다(`OPENAI_API_KEY`를 Secrets에 설정했을 때만 —
+[platform.openai.com](https://platform.openai.com)에서 발급). 검색을 여러 번 쓰는 유료
+호출이라 같은 종목명은 6시간 캐시된다(`app.py`의 `STOCK_OPINION_TTL_SEC`). 키를 설정하지
+않으면 이 탭만 "설정 필요" 안내가 뜨고 나머지 탭(지수/거시/보유종목/뉴스/RS 비교)은 그대로
+정상 동작한다.
 
 ## 파일 구성
 
