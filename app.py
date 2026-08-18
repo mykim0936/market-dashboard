@@ -447,14 +447,26 @@ def fetch_dart_eps_cached(ticker):
 
 @st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_financials_cached(ticker):
-    """종목 상세 패널용 — 최근 최대 9개년치 매출액·영업이익(억원)을 구한다.
-    반환: (연도 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
+    """종목 상세 패널의 연도별 보기용 — 최근 최대 9개년치 매출액·영업이익(억원)을
+    구한다. 반환: (연도 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
     corp_code = fetch_dart_corp_map().get(ticker)
     if not corp_code:
         return [], None
     this_year = datetime.now().year
     bsns_years = [str(this_year - 1), str(this_year - 4), str(this_year - 7)]
     return fetch_dart.fetch_annual_financials(corp_code, bsns_years)
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_quarterly_financials_cached(ticker):
+    """종목 상세 패널의 분기별 보기용 — 최근 최대 8개 분기 매출액·영업이익(억원)을
+    구한다. 반환: (분기 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return [], None
+    this_year = datetime.now().year
+    items, fs_div = fetch_dart.fetch_quarterly_financials(corp_code, [this_year, this_year - 1])
+    return items[-8:], fs_div
 
 
 @st.cache_data(ttl=PER_TTL_SEC)
@@ -473,22 +485,6 @@ def fetch_per_universe(market):
         if not fundamentals.empty and not sectors.empty:
             return fundamentals[['PER']].join(sectors[['업종명']], how='left')
     return pd.DataFrame(columns=['PER', '업종명'])
-
-
-def diagnose_pykrx():
-    """진단용 — fetch_per_universe는 실패 사유를 다 삼켜버리므로, 실제 원인(로그인
-    실패/네트워크 차단/당일 데이터 미집계 등)을 구분하려면 이걸로 직접 확인한다.
-    fetch_per_universe와 같은 방식으로 최근 며칠을 날짜별로 각각 시도해서, 특정
-    날짜만 문제인지(예: 장중이라 당일 데이터 미집계) 아니면 전부 막혀 있는지 본다."""
-    days = {}
-    for delta in range(PER_LOOKBACK_DAYS):
-        d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
-        try:
-            df = pykrx_stock.get_market_fundamental(d, market='KOSPI')
-            days[d] = {'row_count': len(df), 'columns': list(df.columns)}
-        except Exception as e:
-            days[d] = {'exception': f'{type(e).__name__}: {e}'}
-    return days
 
 
 def attach_per_columns(stocks):
@@ -764,28 +760,53 @@ def render_portfolio_panel():
     )
 
 
+def _build_revenue_oi_chart(items, x_labels):
+    """매출액·영업이익은 그룹 막대(회색/초록), 영업이익률은 흰색 꺾은선(보조축)으로
+    겹쳐 그린다. items는 x_labels와 순서가 1:1로 대응하는 {'revenue':, 'operating_income':} 리스트."""
+    bar_rows, margin_rows = [], []
+    for label, it in zip(x_labels, items):
+        revenue = it.get('revenue')
+        op_income = it.get('operating_income')
+        if revenue is not None:
+            bar_rows.append({'구간': label, '항목': '매출액', '금액(억원)': revenue})
+        if op_income is not None:
+            bar_rows.append({'구간': label, '항목': '영업이익', '금액(억원)': op_income})
+        if revenue and op_income is not None:
+            margin_rows.append({'구간': label, '영업이익률(%)': op_income / revenue * 100})
+
+    bars = (
+        alt.Chart(pd.DataFrame(bar_rows))
+        .mark_bar()
+        .encode(
+            x=alt.X('구간:N', title=None, sort=x_labels),
+            xOffset=alt.XOffset('항목:N'),
+            y=alt.Y('금액(억원):Q', title='억원'),
+            color=alt.Color(
+                '항목:N', title=None,
+                scale=alt.Scale(domain=['매출액', '영업이익'], range=[SWISS_GRAY, SWISS_GREEN]),
+            ),
+            tooltip=[alt.Tooltip('구간:N'), alt.Tooltip('항목:N'), alt.Tooltip('금액(억원):Q', format=',.1f')],
+        )
+    )
+    line = (
+        alt.Chart(pd.DataFrame(margin_rows))
+        .mark_line(color=SWISS_WHITE, point=True)
+        .encode(
+            x=alt.X('구간:N', title=None, sort=x_labels),
+            y=alt.Y('영업이익률(%):Q', title='영업이익률(%)'),
+            tooltip=[alt.Tooltip('구간:N'), alt.Tooltip('영업이익률(%):Q', format='+.1f')],
+        )
+    )
+    return alt.layer(bars, line).resolve_scale(y='independent').properties(height=350)
+
+
 def render_stock_detail_panel():
-    """보유 종목 하나를 골라 최근 5개년 매출·영업이익·영업이익률과, 주가·연간
-    영업이익을 함께 보는 추이 그래프를 보여준다. collect_dart.py가 로컬에서 만들어
-    커밋해둔 스냅샷을 최우선으로 쓰고, 없으면 DART Open API(OPENDART_API_KEY)로
-    실시간 조회한다(단, 이 호스팅 환경에서는 DART 접속이 막혀 있을 수 있음)."""
+    """보유 종목 하나를 골라 매출·영업이익(막대)·영업이익률(꺾은선)을 연도별/분기별로
+    골라보고, 아래에서 주가·연간 영업이익 추이도 함께 본다. collect_dart.py가
+    로컬에서 만들어 커밋해둔 스냅샷을 최우선으로 쓰고, 없으면 DART Open API
+    (OPENDART_API_KEY)로 실시간 조회한다(단, 이 호스팅 환경에서는 DART 접속이
+    막혀 있을 수 있음)."""
     st.subheader('종목 상세')
-
-    with st.expander('🔧 진단 정보 (DART/pykrx 연결 문제 확인용)'):
-        st.write({
-            'OPENDART_API_KEY 설정됨': bool(os.environ.get('OPENDART_API_KEY')),
-            'OPENDART_API_KEY 길이': len(os.environ.get('OPENDART_API_KEY') or ''),
-            'KRX_ID 설정됨': bool(os.environ.get('KRX_ID')),
-            'KRX_PW 설정됨': bool(os.environ.get('KRX_PW')),
-        })
-        st.caption('DART API 직접 호출 진단 (삼성전자 고정 조회 — corp_code 매핑 문제와 분리):')
-        st.json(fetch_dart.diagnose())
-        corp_map = fetch_dart_corp_map()
-        st.write(f'corp_code 매핑 개수: {len(corp_map)}건 (0이면 corpCode.xml 다운로드/파싱 실패)')
-        st.write(f'아이쓰리시스템(214430) corp_code: {corp_map.get("214430", "매핑 없음")}')
-
-        st.caption('pykrx 직접 호출 진단 (코스피 전체 PER/업종 벌크 조회):')
-        st.json(diagnose_pykrx())
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
@@ -804,52 +825,71 @@ def render_stock_detail_panel():
     # 에서 DART 라이브 조회가 막혀 있어도(2026-08 확인) 이 파일만 있으면 동작한다.
     snapshot = load_dart_snapshot()
     snap = snapshot.get(ticker)
+    snapshot_label = f"스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py)"
+
+    # 연도별 데이터는 아래 "주가 vs 연간 영업이익" 그래프에도 그대로 쓰이므로
+    # 기간 단위 선택과 무관하게 항상 먼저 받아둔다.
     if snap and snap.get('financials'):
-        years, fs_div = snap['financials'], snap.get('financials_fs_div')
-        source_note = f"스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py)"
+        annual_years, annual_fs_div = snap['financials'], snap.get('financials_fs_div')
+        annual_source = snapshot_label
     elif os.environ.get('OPENDART_API_KEY'):
         with st.spinner('DART에서 재무 데이터를 불러오는 중...'):
-            years, fs_div = fetch_dart_financials_cached(ticker)
-        source_note = 'DART 사업보고서 (자동 조회, 하루 캐시)'
+            annual_years, annual_fs_div = fetch_dart_financials_cached(ticker)
+        annual_source = 'DART 사업보고서 (자동 조회, 하루 캐시)'
     else:
-        years, fs_div = [], None
-        source_note = None
+        annual_years, annual_fs_div, annual_source = [], None, None
 
-    if not years:
+    if not annual_years:
         st.info(
             f'{selected_name}의 DART 재무 데이터를 찾지 못했습니다. '
             'ETF·비상장·최근 상장 종목이라 데이터가 없거나, 로컬 스냅샷에 없고 '
             '이 서버에서 DART로의 접속 자체가 막혀 있을 수 있습니다(호스팅 환경에 '
-            '따라 opendart.fss.or.kr 접속이 차단되는 경우가 있습니다 — 위 '
-            '"진단 정보"에서 확인 가능).'
+            '따라 opendart.fss.or.kr 접속이 차단되는 경우가 있습니다).'
         )
         return
 
-    fin_df = pd.DataFrame(years)
-    fin_df['영업이익률(%)'] = fin_df['operating_income'] / fin_df['revenue'] * 100
+    period_type = st.radio('기간 단위', ['연도별', '분기별'], horizontal=True, key='detail_period_type')
 
-    display_df = fin_df.tail(5).rename(columns={
-        'year': '연도', 'revenue': '매출액(억원)', 'operating_income': '영업이익(억원)',
-    })[['연도', '매출액(억원)', '영업이익(억원)', '영업이익률(%)']]
+    if period_type == '연도별':
+        items = annual_years[-5:]
+        x_labels = [str(y['year']) for y in items]
+        source_note, fs_div = annual_source, annual_fs_div
+    else:
+        if snap and snap.get('quarterly'):
+            items = snap['quarterly']
+            source_note, fs_div = snapshot_label, snap.get('quarterly_fs_div')
+        elif os.environ.get('OPENDART_API_KEY'):
+            with st.spinner('DART에서 분기 재무 데이터를 불러오는 중...'):
+                items, fs_div = fetch_dart_quarterly_financials_cached(ticker)
+            source_note = 'DART 분기/반기/사업보고서 (자동 조회, 하루 캐시)'
+        else:
+            items, fs_div, source_note = [], None, None
+        x_labels = [f"{it['year']}년 {it['quarter']}분기" for it in items]
 
-    st.dataframe(
-        display_df.style.format({
-            '매출액(억원)': '{:,.1f}',
-            '영업이익(억원)': '{:+,.1f}',
-            '영업이익률(%)': '{:+.1f}',
-        }),
-        hide_index=True, width='stretch',
+    if not items:
+        st.info(f'{selected_name}의 {period_type} 재무 데이터를 찾지 못했습니다.')
+        return
+
+    st.altair_chart(_build_revenue_oi_chart(items, x_labels), use_container_width=True)
+
+    partial_notes = [f"{it['year']}년: {it['partial']}" for it in items if it.get('partial')]
+    caption = (
+        f'출처: {source_note} · {fs_div or ""} · '
+        '매출액·영업이익(막대, 왼쪽 축) / 영업이익률(흰 선, 오른쪽 축)'
     )
-
-    partial_notes = [f"{y['year']}년: {y['partial']}" for y in years if y.get('partial')]
-    caption = f'출처: {source_note} · {fs_div or ""}'
     if partial_notes:
         caption += ' · 부분 실적 ' + ', '.join(partial_notes)
+    if period_type == '분기별':
+        caption += (
+            ' · 분기 실적은 누적 보고서(반기/3분기/사업보고서)에서 앞 분기 누적치를 '
+            '뺀 값이라, 비교기간 재무 정정 등으로 드물게 음수가 나올 수 있습니다.'
+        )
     st.caption(caption)
 
+    # --- 아래: 주가 vs 연간 영업이익 (기간 단위 선택과 무관하게 항상 연도별) ---
     # 부분 실적 연도(설립 첫해 등)는 12개월치가 아니라 추이·비교를 왜곡하므로
     # 그래프에서는 제외하고, 정상 연도만으로 최근 7개년을 그린다.
-    full_years = [y for y in years if not y.get('partial')]
+    full_years = [y for y in annual_years if not y.get('partial')]
     if len(full_years) < 2:
         st.info('정상 실적 연도가 2개 미만이라 추이 그래프를 그릴 수 없습니다.')
         return

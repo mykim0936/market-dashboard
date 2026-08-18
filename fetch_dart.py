@@ -22,32 +22,6 @@ def _api_key():
     return os.environ.get('OPENDART_API_KEY')
 
 
-def diagnose():
-    """진단용 — 정상 경로(_get)는 실패 사유를 다 None으로 뭉개버리므로, 실제 원인을
-    구분해야 할 때(예: 배포 환경에서 이유 없이 계속 실패할 때) 이걸로 직접 확인한다.
-    삼성전자(00126380)로 고정 조회해서 corp_code/매핑 문제와 분리한다."""
-    api_key = _api_key()
-    result = {'api_key_set': bool(api_key), 'api_key_len': len(api_key) if api_key else 0}
-    if not api_key:
-        return result
-    try:
-        resp = requests.get(f'{DART_API_BASE}/fnlttSinglAcnt.json', params={
-            'crtfc_key': api_key, 'corp_code': '00126380', 'bsns_year': '2025', 'reprt_code': '11011',
-        }, timeout=DART_TIMEOUT_SEC)
-        result['http_status'] = resp.status_code
-        try:
-            data = resp.json()
-            result['dart_status'] = data.get('status')
-            result['dart_message'] = data.get('message')
-            result['row_count'] = len(data.get('list', []))
-        except ValueError:
-            result['json_parse_failed'] = True
-            result['raw_text_head'] = resp.text[:300]
-    except requests.exceptions.RequestException as e:
-        result['request_exception'] = f'{type(e).__name__}: {e}'
-    return result
-
-
 def _get(endpoint, params):
     """반환값은 status="000"(정상)일 때만 list, 그 외(키 없음/자료 없음/네트워크 오류/
     HTTP 오류/DART 오류코드)는 전부 None — 호출부가 매번 try/except를 안 써도
@@ -201,3 +175,69 @@ def fetch_annual_financials(corp_code, bsns_years):
             }
 
     return sorted(by_year.values(), key=lambda x: x['year']), fs_div_used
+
+
+# 분기보고서(11013)는 1분기 단독 실적을 그대로 주지만, 반기(11012)/3분기(11014)/
+# 사업보고서(11011)는 연초부터의 "누적" 실적이다. 그래서 각 분기 단독값은 누적치를
+# 뺄셈해서 만들어야 한다 — {report_code: 그 보고서가 커버하는 분기 번호(1~4)}.
+QUARTER_REPORT_CODES = {'11013': 1, '11012': 2, '11014': 3, '11011': 4}
+
+
+def fetch_quarterly_financials(corp_code, bsns_years):
+    """여러 bsns_year에 대해 분기별 매출액·영업이익(억원)을 계산한다 — 반기/3분기/
+    사업보고서의 누적치에서 앞 분기 누적치를 빼서 해당 분기만의 실적을 만든다.
+    아직 안 나온 분기(예: 3분기 보고서가 아직 없는 해)는 건너뛴다. 반환:
+    ((연도, 분기) 오름차순 리스트, 실제 쓰인 fs_div)."""
+    by_key = {}
+    fs_div_used = None
+
+    for bsns_year in bsns_years:
+        cumulative = {}
+        for reprt_code, qnum in QUARTER_REPORT_CODES.items():
+            rows = None
+            for fs_div in ('CFS', 'OFS'):
+                candidate_rows = _get('fnlttSinglAcnt.json', {
+                    'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': reprt_code,
+                })
+                if not candidate_rows:
+                    continue
+                filtered = [
+                    r for r in candidate_rows
+                    if r.get('fs_div') == fs_div and r.get('sj_div') == 'IS'
+                    and r.get('account_nm') in ('매출액', '영업이익')
+                ]
+                if filtered:
+                    rows = filtered
+                    fs_div_used = fs_div
+                    break
+            if not rows:
+                continue
+
+            revenue_row = next((r for r in rows if r.get('account_nm') == '매출액'), None)
+            oi_row = next((r for r in rows if r.get('account_nm') == '영업이익'), None)
+            date_str = (revenue_row or oi_row or {}).get('thstrm_dt', '')
+            _, end = _parse_period(date_str)
+            if end is None:
+                continue
+            revenue = _to_amount(revenue_row, 'thstrm_amount')
+            op_income = _to_amount(oi_row, 'thstrm_amount')
+            if revenue is None and op_income is None:
+                continue
+            cumulative[qnum] = (revenue, op_income)
+
+        prev_revenue, prev_op_income = 0.0, 0.0
+        for qnum in (1, 2, 3, 4):
+            if qnum not in cumulative:
+                continue
+            revenue, op_income = cumulative[qnum]
+            q_revenue = None if revenue is None else revenue - prev_revenue
+            q_op_income = None if op_income is None else op_income - prev_op_income
+            by_key[(bsns_year, qnum)] = {
+                'year': bsns_year, 'quarter': qnum, 'revenue': q_revenue, 'operating_income': q_op_income,
+            }
+            if revenue is not None:
+                prev_revenue = revenue
+            if op_income is not None:
+                prev_op_income = op_income
+
+    return sorted(by_key.values(), key=lambda x: (x['year'], x['quarter'])), fs_div_used

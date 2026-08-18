@@ -65,6 +65,12 @@ def build_snapshot():
                 entry['financials'] = fin_years
                 entry['financials_fs_div'] = fin_fs_div
 
+            fin_quarters, q_fs_div = fetch_dart.fetch_quarterly_financials(
+                corp_code, [this_year, this_year - 1])
+            if fin_quarters:
+                entry['quarterly'] = fin_quarters[-8:]
+                entry['quarterly_fs_div'] = q_fs_div
+
         # 시장을 모르는 상태로 시작하므로 KOSPI/KOSDAQ 순서대로 찾아본다.
         for market in ('KOSPI', 'KOSDAQ'):
             if market not in universes:
