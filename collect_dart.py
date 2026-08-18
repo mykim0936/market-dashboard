@@ -8,6 +8,7 @@
 # 기존처럼 라이브 조회를 시도한다. PER/재무는 하루~일주일에 한 번만 갱신돼도 충분하다.
 import json
 import os
+import subprocess
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -88,6 +89,34 @@ def build_snapshot():
     return stocks
 
 
+def git_commit_and_push():
+    """스냅샷 파일만(git add -A 아님) 커밋해서 origin/main 에 바로 푸시한다 —
+    이래야 Streamlit Cloud 배포본이 다음 접속 때 최신 스냅샷을 받는다. 내용이
+    이전과 똑같으면(장 휴장일 등) 빈 커밋을 만들지 않고 조용히 넘어간다.
+    실패해도(네트워크, 인증 등) 예외를 다시 던지지 않는다 — 스냅샷 파일 자체는
+    이미 로컬에 저장됐으니 이 단계가 실패해도 스케줄러 작업 전체를 실패로
+    끝내지 않고, 다음 실행 때 다시 시도되게 한다."""
+    repo_dir = os.path.dirname(os.path.abspath(__file__)) or '.'
+    try:
+        status = subprocess.run(
+            ['git', 'status', '--porcelain', '--', SNAPSHOT_PATH],
+            cwd=repo_dir, capture_output=True, text=True, check=True,
+        )
+        if not status.stdout.strip():
+            print('스냅샷 내용이 이전과 같아 git push를 건너뜁니다.')
+            return
+
+        subprocess.run(['git', 'add', '--', SNAPSHOT_PATH], cwd=repo_dir, check=True)
+        commit_msg = f"Auto-update DART/pykrx snapshot ({datetime.now().strftime('%Y-%m-%d')})"
+        subprocess.run(['git', 'commit', '-m', commit_msg], cwd=repo_dir, check=True)
+        subprocess.run(['git', 'push'], cwd=repo_dir, check=True)
+        print('-> git push 완료')
+    except subprocess.CalledProcessError as e:
+        print(f'[WARN] git 자동 커밋/푸시 실패(다음 실행 때 재시도됨): {e}')
+    except Exception as e:
+        print(f'[WARN] git 자동 커밋/푸시 중 예외(다음 실행 때 재시도됨): {e}')
+
+
 def main():
     stocks = build_snapshot()
     if not stocks:
@@ -102,6 +131,8 @@ def main():
     with open(SNAPSHOT_PATH, 'w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f'-> {len(stocks)}개 종목을 {SNAPSHOT_PATH} 에 저장했습니다.')
+
+    git_commit_and_push()
 
 
 if __name__ == '__main__':
