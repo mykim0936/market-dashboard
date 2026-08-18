@@ -30,7 +30,7 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_KEY'):
+for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_KEY', 'OPENDART_API_KEY'):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -38,6 +38,7 @@ for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'OPENAI_API_K
 import pykrx.stock as pykrx_stock
 import yfinance as yf
 
+import fetch_dart
 import fetch_indicators
 import fetch_news
 import fetch_portfolio
@@ -377,94 +378,43 @@ def get_holdings_from_secrets():
 PER_TTL_SEC = 3600
 PER_LOOKBACK_DAYS = 5
 
-# DART(전자공시) 사업보고서에서 playmcp opendart 도구로 직접 확인한 EPS(주당순이익,
-# 원)다. 자동 조회가 아니라 보유 종목이 바뀔 때마다 여기도 손으로 다시 확인해서
-# 채워야 한다 — DART는 종목별 EPS만 주고 시가는 안 주므로, PER은 이 EPS에 그날의
-# 현재가를 나눠 직접 계산한다(더 오래된 연도 EPS라도 최신 시가를 반영한 PER이 됨).
-# 순손실(EPS<=0)인 종목은 PER이 의미가 없어 None으로 둔다.
-DART_EPS = {
-    '214430': {'eps': 2657, 'source': '2025 사업보고서 개별(OFS, 연결 미제출)'},  # 아이쓰리시스템
-    '050890': {'eps': 610, 'source': '2025 사업보고서 연결(CFS)'},               # 쏠리드
-    '457190': {'eps': 26, 'source': '2025 사업보고서 연결(CFS)'},                # 이수스페셜티케미컬
-    '348370': {'eps': None, 'source': '2025 사업보고서 연결(CFS) — 순손실(EPS -3,154원)'},  # 엔켐
-    '489790': {'eps': 902, 'source': '2025 사업보고서 연결(CFS)'},               # 한화비전
-    '051980': {'eps': None, 'source': '2025 사업보고서 연결(CFS) — 순손실(EPS -53원)'},     # 중앙첨단소재
-}
+# DART(전자공시) 데이터는 분기/연 단위로만 바뀌므로 하루 단위로 길게 캐시한다.
+DART_TTL_SEC = 24 * 60 * 60
 
-# 종목 상세 패널용 — DART 사업보고서에서 playmcp opendart 도구로 직접 확인한 연간
-# 매출액·영업이익(억원). DART_EPS와 마찬가지로 자동 조회가 아니므로 보유 종목이
-# 바뀌면 다시 확인해서 채워야 한다. 설립/분할 첫해처럼 12개월치가 아닌 해는
-# 'partial'에 기간을 적어두고, 정규화·추이 계산의 기준 연도로는 쓰지 않는다.
-DART_FINANCIALS = {
-    '214430': {  # 아이쓰리시스템 — OFS(연결 미제출)
-        'source': 'DART 사업보고서 개별(OFS, 연결 미제출)',
-        'years': [
-            {'year': 2017, 'revenue': 696.1, 'operating_income': 92.2},
-            {'year': 2018, 'revenue': 691.6, 'operating_income': 89.9},
-            {'year': 2019, 'revenue': 518.6, 'operating_income': -24.0},
-            {'year': 2020, 'revenue': 665.3, 'operating_income': 7.7},
-            {'year': 2021, 'revenue': 797.2, 'operating_income': 14.1},
-            {'year': 2022, 'revenue': 838.5, 'operating_income': 56.9},
-            {'year': 2023, 'revenue': 1215.4, 'operating_income': 122.0},
-            {'year': 2024, 'revenue': 1207.0, 'operating_income': 147.6},
-            {'year': 2025, 'revenue': 1242.8, 'operating_income': 164.6},
-        ],
-    },
-    '050890': {  # 쏠리드 — CFS
-        'source': 'DART 사업보고서 연결(CFS)',
-        'years': [
-            {'year': 2017, 'revenue': 2537.4, 'operating_income': 209.1},
-            {'year': 2018, 'revenue': 2225.8, 'operating_income': 10.6},
-            {'year': 2019, 'revenue': 2292.8, 'operating_income': -35.2},
-            {'year': 2020, 'revenue': 1711.5, 'operating_income': -157.1},
-            {'year': 2021, 'revenue': 2122.6, 'operating_income': 61.3},
-            {'year': 2022, 'revenue': 2797.9, 'operating_income': 285.9},
-            {'year': 2023, 'revenue': 3213.6, 'operating_income': 362.7},
-            {'year': 2024, 'revenue': 3310.7, 'operating_income': 351.4},
-            {'year': 2025, 'revenue': 2948.3, 'operating_income': 332.8},
-        ],
-    },
-    '457190': {  # 이수스페셜티케미컬 — CFS, 2023년 5월 분할설립
-        'source': 'DART 사업보고서 연결(CFS) — 2023년 5월 분할설립',
-        'years': [
-            {'year': 2023, 'revenue': 1175.3, 'operating_income': -61.2, 'partial': '5~12월(8개월, 설립 첫해)'},
-            {'year': 2024, 'revenue': 3320.7, 'operating_income': 142.1},
-            {'year': 2025, 'revenue': 4114.7, 'operating_income': 16.2},
-        ],
-    },
-    '348370': {  # 엔켐 — CFS
-        'source': 'DART 사업보고서 연결(CFS)',
-        'years': [
-            {'year': 2020, 'revenue': 1388.9, 'operating_income': 125.3},
-            {'year': 2021, 'revenue': 2143.3, 'operating_income': -259.7},
-            {'year': 2022, 'revenue': 5097.9, 'operating_income': 153.6},
-            {'year': 2023, 'revenue': 4246.9, 'operating_income': 51.2},
-            {'year': 2024, 'revenue': 3657.1, 'operating_income': -504.0},
-            {'year': 2025, 'revenue': 3127.9, 'operating_income': -783.9},
-        ],
-    },
-    '489790': {  # 한화비전 — CFS, 2024년 9월 분할설립(한화테크윈 비전부문)
-        'source': 'DART 사업보고서 연결(CFS) — 2024년 9월 분할설립',
-        'years': [
-            {'year': 2024, 'revenue': 4933.2, 'operating_income': 54.7, 'partial': '9~12월(4개월, 설립 첫해)'},
-            {'year': 2025, 'revenue': 17909.2, 'operating_income': 1622.7},
-        ],
-    },
-    '051980': {  # 중앙첨단소재 — CFS
-        'source': 'DART 사업보고서 연결(CFS)',
-        'years': [
-            {'year': 2017, 'revenue': 71.6, 'operating_income': -5.6},
-            {'year': 2018, 'revenue': 112.4, 'operating_income': -23.4},
-            {'year': 2019, 'revenue': 97.8, 'operating_income': -85.1},
-            {'year': 2020, 'revenue': 107.6, 'operating_income': -79.6},
-            {'year': 2021, 'revenue': 130.3, 'operating_income': -46.4},
-            {'year': 2022, 'revenue': 290.6, 'operating_income': -54.2},
-            {'year': 2023, 'revenue': 263.0, 'operating_income': 0.6},
-            {'year': 2024, 'revenue': 186.9, 'operating_income': -78.0},
-            {'year': 2025, 'revenue': 198.1, 'operating_income': -45.6},
-        ],
-    },
-}
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_corp_map():
+    """종목코드 -> DART corp_code 매핑(전체 상장사, 수 MB짜리 벌크 조회) — 자주 안
+    바뀌므로 하루 캐시. OPENDART_API_KEY가 없으면 빈 딕셔너리를 반환한다."""
+    return fetch_dart.fetch_corp_code_map()
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_eps_cached(ticker):
+    """DART 사업보고서 기준 EPS(원)를 구한다. 반환: (eps, fs_div, bsns_year) —
+    못 찾으면 (None, None, None). 올해 사업보고서가 아직 안 나왔을 수 있어 최근
+    연도부터 2개까지 시도한다."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return None, None, None
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        eps, fs_div = fetch_dart.fetch_eps(corp_code, str(bsns_year))
+        if eps is not None:
+            return eps, fs_div, bsns_year
+    return None, None, None
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_financials_cached(ticker):
+    """종목 상세 패널용 — 최근 최대 9개년치 매출액·영업이익(억원)을 구한다.
+    반환: (연도 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return [], None
+    this_year = datetime.now().year
+    bsns_years = [str(this_year - 1), str(this_year - 4), str(this_year - 7)]
+    return fetch_dart.fetch_annual_financials(corp_code, bsns_years)
 
 
 @st.cache_data(ttl=PER_TTL_SEC)
@@ -487,8 +437,9 @@ def fetch_per_universe(market):
 
 def attach_per_columns(stocks):
     """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
-    - 자기 PER: DART_EPS에 직접 확인해둔 종목은 (오늘 현재가 / DART EPS)로 계산하고,
-      거기 없는 종목(신규 보유 등)은 pykrx가 주는 KRX 자체 PER로 대체한다.
+    - 자기 PER: DART Open API로 확인한 EPS가 있으면 (오늘 현재가 / DART EPS)로
+      계산하고(OPENDART_API_KEY 미설정이거나 조회 실패 시), pykrx가 주는 KRX 자체
+      PER로 대체한다.
     - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 pykrx PER 중앙값(적자로 PER이
       의미 없는 0 이하 값은 제외) — DART는 종목별 재무제표만 주고 업종 분류/동종
       비교 데이터는 없어서, 피어 비교는 pykrx 시장 전체 데이터로 계산한다.
@@ -510,10 +461,9 @@ def attach_per_columns(stocks):
                 universes[market] = fetch_per_universe(market)
             universe = universes[market]
 
-        dart = DART_EPS.get(ticker)
-        if dart is not None:
-            eps = dart['eps']
-            stock_per = current_price / eps if eps and current_price else None
+        eps, _, _ = fetch_dart_eps_cached(ticker)
+        if eps is not None:
+            stock_per = current_price / eps if eps > 0 and current_price else None
         elif universe is not None and not universe.empty and ticker in universe.index:
             raw_per = universe.loc[ticker, 'PER']
             stock_per = raw_per if raw_per and raw_per > 0 else None
@@ -745,8 +695,8 @@ def render_portfolio_panel():
 
 def render_stock_detail_panel():
     """보유 종목 하나를 골라 최근 5개년 매출·영업이익·영업이익률과, 주가·연간
-    영업이익을 함께 보는 추이 그래프를 보여준다. DART_FINANCIALS에 값이 있는
-    종목만 고를 수 있다(ETF·현금·아직 DART로 확인 안 한 신규 종목은 대상 아님)."""
+    영업이익을 함께 보는 추이 그래프를 보여준다. DART Open API(OPENDART_API_KEY)로
+    실시간 조회하므로 보유 종목이 바뀌어도 별도 작업 없이 그대로 동작한다."""
     st.subheader('종목 상세')
 
     portfolio_df = get_portfolio_df()
@@ -755,15 +705,22 @@ def render_stock_detail_panel():
         return
 
     holdings = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
-    holdings = holdings[holdings['ticker'].astype(str).isin(DART_FINANCIALS)]
     if holdings.empty:
-        st.info('상세 재무가 확인된 보유 종목이 없습니다 (ETF·현금은 대상이 아닙니다).')
+        st.info('보유 종목이 없어 상세 재무를 볼 수 없습니다.')
+        return
+
+    if not os.environ.get('OPENDART_API_KEY'):
+        st.info('OPENDART_API_KEY 가 설정되어 있지 않아 종목 상세 재무를 불러올 수 없습니다. Secrets에 키를 추가해 주세요.')
         return
 
     selected_name = st.selectbox('상세히 볼 종목', holdings['name'].tolist(), key='detail_stock')
     ticker = str(holdings.loc[holdings['name'] == selected_name, 'ticker'].iloc[0])
-    info = DART_FINANCIALS[ticker]
-    years = info['years']
+
+    with st.spinner('DART에서 재무 데이터를 불러오는 중...'):
+        years, fs_div = fetch_dart_financials_cached(ticker)
+    if not years:
+        st.info(f'{selected_name}의 DART 재무 데이터를 찾지 못했습니다 (ETF·비상장·최근 상장 종목 등은 없을 수 있습니다).')
+        return
 
     fin_df = pd.DataFrame(years)
     fin_df['영업이익률(%)'] = fin_df['operating_income'] / fin_df['revenue'] * 100
@@ -782,7 +739,7 @@ def render_stock_detail_panel():
     )
 
     partial_notes = [f"{y['year']}년: {y['partial']}" for y in years if y.get('partial')]
-    caption = f"출처: {info['source']} (playmcp DART로 직접 확인 — 보유 종목이 바뀌면 다시 확인 필요)"
+    caption = f'출처: DART 사업보고서 {fs_div or ""} (자동 조회, 하루 캐시)'
     if partial_notes:
         caption += ' · 부분 실적 ' + ', '.join(partial_notes)
     st.caption(caption)

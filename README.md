@@ -88,6 +88,13 @@ python -m streamlit run app.py
 않으면 이 탭만 "설정 필요" 안내가 뜨고 나머지 탭(지수/거시/보유종목/뉴스/RS 비교)은 그대로
 정상 동작한다.
 
+**보유 종목 PER·종목 상세**: 포트폴리오 탭의 PER(EPS 기준)과 "종목 상세" 패널(연간
+매출액/영업이익/영업이익률 + 주가·영업이익 추이 그래프)은 **DART Open API**를 직접
+호출해 실시간으로 가져온다(`OPENDART_API_KEY`를 Secrets에 설정했을 때만 —
+[opendart.fss.or.kr](https://opendart.fss.or.kr)에서 무료 발급). 재무제표는 분기/연
+단위로만 바뀌므로 하루 캐시된다(`app.py`의 `DART_TTL_SEC`). 키를 설정하지 않으면
+PER은 pykrx 자체 PER로 자동 대체되고, "종목 상세" 패널만 "설정 필요" 안내가 뜬다.
+
 ## 파일 구성
 
 | 파일 | 역할 |
@@ -97,7 +104,9 @@ python -m streamlit run app.py
 | `fetch_portfolio.py` | `portfolio.csv` 기준 보유 종목 시세·평가손익 계산 |
 | `fetch_indicators.py` | ECOS(기준금리·환율) / FRED(미 10년물·달러인덱스) |
 | `fetch_news.py` | 국내외 RSS 10종에서 24시간 이내 기사 수집 |
-| `make_briefing.py` | 지표·뉴스 기반 시황 브리핑 생성 (로컬 claude CLI / 클라우드 Anthropic API) |
+| `fetch_dart.py` | DART Open API — 보유 종목 EPS·연간 매출액/영업이익 실시간 조회 |
+| `stock_opinion.py` | "종목 분석" 탭 — OpenAI Responses API(웹 검색 포함)로 투자의견 리포트 생성 |
+| `make_briefing.py` | 지표·뉴스 기반 브리핑 텍스트 생성 (로컬 파이프라인 전용 — 대시보드 UI에는 더 이상 표시 안 함) |
 | `validate.py` | 수집 데이터 교차 검증 |
 | `requirements.txt` | Streamlit Cloud 배포용 의존성 목록 |
 | `run_quick_refresh.bat` / `run_full_collect.bat` | Windows 작업 스케줄러가 호출하는 래퍼 |
