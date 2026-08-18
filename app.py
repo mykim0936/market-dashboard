@@ -29,7 +29,7 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'ANTHROPIC_API_KEY'):
+for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD'):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -40,7 +40,6 @@ import yfinance as yf
 import fetch_indicators
 import fetch_news
 import fetch_portfolio
-import make_briefing
 
 DATA_DIR = 'data'
 
@@ -114,7 +113,6 @@ UP_COLOR = '#D32F2F'
 DOWN_COLOR = '#1565C0'
 
 INDICATORS_CSV = os.path.join(DATA_DIR, 'indicators.csv')
-BRIEFING_MD = os.path.join(DATA_DIR, 'briefing.md')
 NEWS_CSV = os.path.join(DATA_DIR, 'news.csv')
 PORTFOLIO_CSV = os.path.join(DATA_DIR, 'portfolio_status.csv')
 NEWS_LIMIT = 15
@@ -125,10 +123,6 @@ CASH_TICKER = 'CASH'
 # 클라우드에서 여러 사용자가 동시에 열어도 KRX/RSS 요청이 과도하게 나가지 않게 한다.
 CACHE_TTL_SEC = 20
 LIVE_FETCH_TTL_SEC = 60
-
-# 브리핑은 유료 API 호출이라 지수/뉴스보다 훨씬 길게 캐시한다 — 패널을 열 때마다
-# 과금되면 안 되므로 15분에 한 번만 실제로 다시 생성한다.
-BRIEFING_TTL_SEC = 900
 
 REFRESH_OPTIONS = {'끔': None, '30초': 30, '1분': 60, '5분': 300}
 QUICK_REFRESH_TIMEOUT_SEC = 300
@@ -153,6 +147,12 @@ def inject_theme_css():
         font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif !important;
     }}
 
+    /* 전반적으로 글씨를 작게 — rem/em 단위로 잡힌 대부분의 크기가 이 기준값을 따라
+    같이 줄어든다(기본 16px -> 13px, 약 80%). */
+    html {{
+        font-size: 13px;
+    }}
+
     .stApp {{
         background-color: {SWISS_BLACK};
         color: {SWISS_WHITE};
@@ -164,13 +164,18 @@ def inject_theme_css():
         letter-spacing: -0.02em;
         color: {SWISS_WHITE} !important;
     }}
+    h1 {{
+        font-size: 1.6rem !important;
+        border-bottom: 3px solid {SWISS_WHITE};
+        padding-bottom: 0.5rem;
+    }}
     h2 {{
+        font-size: 1.25rem !important;
         border-bottom: 2px solid {SWISS_WHITE};
         padding-bottom: 0.3rem;
     }}
-    h1 {{
-        border-bottom: 3px solid {SWISS_WHITE};
-        padding-bottom: 0.5rem;
+    h3 {{
+        font-size: 1.05rem !important;
     }}
 
     hr {{
@@ -195,12 +200,13 @@ def inject_theme_css():
     [data-testid="stMetricLabel"] {{
         color: {SWISS_GRAY};
         text-transform: uppercase;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         letter-spacing: 0.05em;
     }}
     [data-testid="stMetricValue"] {{
         color: {SWISS_WHITE};
         font-weight: 700;
+        font-size: 1.4rem !important;
     }}
 
     /* 탭 강조색(선택된 탭 글자/밑줄)도 config.toml의 primaryColor(초록)를 그대로 쓴다. */
@@ -546,54 +552,6 @@ def render_portfolio_panel():
                ' · 비중은 현금 제외 주식 평가금액 대비')
 
 
-@st.cache_data(ttl=BRIEFING_TTL_SEC)
-def fetch_briefing_live():
-    """클라우드 배포본용 — claude CLI 없이 Anthropic API로 브리핑을 직접 생성한다.
-    유료 호출이라 인자 없이 캐시해 15분에 한 번만 실제로 호출되게 한다."""
-    indicators_df = get_indicators_df()
-    news_df = get_news_df()
-    if indicators_df.empty or news_df.empty:
-        return None
-
-    indicators_records = indicators_df.to_dict('records')
-    news_records = (
-        news_df.sort_values('published_at', ascending=False)
-        .head(make_briefing.NEWS_LIMIT)
-        .to_dict('records')
-    )
-    return make_briefing.generate_briefing_via_api(indicators_records, news_records)
-
-
-def render_briefing_panel():
-    st.subheader('시황 브리핑')
-
-    if os.path.exists(BRIEFING_MD):
-        with open(BRIEFING_MD, encoding='utf-8') as f:
-            st.markdown(f.read())
-        st.caption(file_caption(BRIEFING_MD, 'claude -p 브리핑 생성 (indicators.csv + news.csv 기반)'))
-        return
-
-    if not os.environ.get('ANTHROPIC_API_KEY'):
-        st.info(
-            '로컬 브리핑 파일이 없다. 클라우드에서 이 패널을 쓰려면 Secrets에 '
-            'ANTHROPIC_API_KEY 를 설정해 라이브 생성을 켜야 한다.'
-        )
-        return
-
-    with st.spinner('브리핑 생성 중...'):
-        text = fetch_briefing_live()
-
-    if text is None:
-        st.warning('브리핑 생성에 실패했습니다 (API 오류이거나 지표/뉴스 데이터가 아직 없음).')
-        return
-
-    st.markdown(text)
-    st.caption(
-        f"갱신 시각: 방금 (라이브 생성, 최대 {BRIEFING_TTL_SEC // 60}분 캐시) · "
-        f"출처: Anthropic API ({make_briefing.ANTHROPIC_MODEL})"
-    )
-
-
 # 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
 # 절반으로 줄어드는 만큼 세로도 같이 줄여야 차트 비율이 과하게 길쭉해지지 않는다.
 CHART_GRID_HEIGHT = 260
@@ -866,8 +824,6 @@ def main():
     # run_every 값이 라디오 선택에 따라 달라져야 해서 데코레이터를 런타임에 적용한다.
     with tab_market:
         st.fragment(run_every=interval)(render_market_live)()
-        st.divider()
-        render_briefing_panel()
         st.divider()
         render_index_charts(MARKET_SERIES)
 
