@@ -11,8 +11,11 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+# Streamlit Community Cloud에서 opendart.fss.or.kr로의 연결이 (인증 실패가 아니라)
+# TCP 연결 자체가 느려서 30초 만에 타임아웃난 사례가 있었다 — 진짜 느린 건지 아예
+# 막힌 건지 구분하려고 넉넉하게 늘려둔다.
 DART_API_BASE = 'https://opendart.fss.or.kr/api'
-DART_TIMEOUT_SEC = 30
+DART_TIMEOUT_SEC = 60
 
 
 def _api_key():
