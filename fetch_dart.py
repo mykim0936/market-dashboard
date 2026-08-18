@@ -19,6 +19,32 @@ def _api_key():
     return os.environ.get('OPENDART_API_KEY')
 
 
+def diagnose():
+    """진단용 — 정상 경로(_get)는 실패 사유를 다 None으로 뭉개버리므로, 실제 원인을
+    구분해야 할 때(예: 배포 환경에서 이유 없이 계속 실패할 때) 이걸로 직접 확인한다.
+    삼성전자(00126380)로 고정 조회해서 corp_code/매핑 문제와 분리한다."""
+    api_key = _api_key()
+    result = {'api_key_set': bool(api_key), 'api_key_len': len(api_key) if api_key else 0}
+    if not api_key:
+        return result
+    try:
+        resp = requests.get(f'{DART_API_BASE}/fnlttSinglAcnt.json', params={
+            'crtfc_key': api_key, 'corp_code': '00126380', 'bsns_year': '2025', 'reprt_code': '11011',
+        }, timeout=DART_TIMEOUT_SEC)
+        result['http_status'] = resp.status_code
+        try:
+            data = resp.json()
+            result['dart_status'] = data.get('status')
+            result['dart_message'] = data.get('message')
+            result['row_count'] = len(data.get('list', []))
+        except ValueError:
+            result['json_parse_failed'] = True
+            result['raw_text_head'] = resp.text[:300]
+    except requests.exceptions.RequestException as e:
+        result['request_exception'] = f'{type(e).__name__}: {e}'
+    return result
+
+
 def _get(endpoint, params):
     """반환값은 status="000"(정상)일 때만 list, 그 외(키 없음/자료 없음/네트워크 오류/
     HTTP 오류/DART 오류코드)는 전부 None — 호출부가 매번 try/except를 안 써도

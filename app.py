@@ -711,6 +711,19 @@ def render_stock_detail_panel():
     실시간 조회하므로 보유 종목이 바뀌어도 별도 작업 없이 그대로 동작한다."""
     st.subheader('종목 상세')
 
+    with st.expander('🔧 진단 정보 (DART/pykrx 연결 문제 확인용)'):
+        st.write({
+            'OPENDART_API_KEY 설정됨': bool(os.environ.get('OPENDART_API_KEY')),
+            'OPENDART_API_KEY 길이': len(os.environ.get('OPENDART_API_KEY') or ''),
+            'KRX_ID 설정됨': bool(os.environ.get('KRX_ID')),
+            'KRX_PW 설정됨': bool(os.environ.get('KRX_PW')),
+        })
+        st.caption('DART API 직접 호출 진단 (삼성전자 고정 조회 — corp_code 매핑 문제와 분리):')
+        st.json(fetch_dart.diagnose())
+        corp_map = fetch_dart_corp_map()
+        st.write(f'corp_code 매핑 개수: {len(corp_map)}건 (0이면 corpCode.xml 다운로드/파싱 실패)')
+        st.write(f'아이쓰리시스템(214430) corp_code: {corp_map.get("214430", "매핑 없음")}')
+
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
         st.info('보유 종목이 없어 상세 재무를 볼 수 없습니다.')
