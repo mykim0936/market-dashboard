@@ -744,7 +744,12 @@ def render_stock_detail_panel():
     with st.spinner('DART에서 재무 데이터를 불러오는 중...'):
         years, fs_div = fetch_dart_financials_cached(ticker)
     if not years:
-        st.info(f'{selected_name}의 DART 재무 데이터를 찾지 못했습니다 (ETF·비상장·최근 상장 종목 등은 없을 수 있습니다).')
+        st.info(
+            f'{selected_name}의 DART 재무 데이터를 찾지 못했습니다. '
+            'ETF·비상장·최근 상장 종목이라 데이터가 없거나, 이 서버에서 DART로의 '
+            '접속 자체가 막혀 있을 수 있습니다(호스팅 환경에 따라 opendart.fss.or.kr '
+            '접속이 차단되는 경우가 있습니다 — 위 "진단 정보"에서 확인 가능).'
+        )
         return
 
     fin_df = pd.DataFrame(years)
