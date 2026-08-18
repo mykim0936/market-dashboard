@@ -4,6 +4,7 @@
 # "CSV가 있으면 그걸 읽고, 없으면 그 자리에서 직접 받아온다" 하이브리드 방식을 쓴다.
 # - 로컬: collect.py가 10분마다 CSV를 써두므로 디스크만 읽어 빠르다.
 # - 클라우드: 스케줄러가 없으므로 data/*.csv 가 커밋되어 있지 않다 -> 매번 직접 조회.
+import html
 import os
 import socket
 import subprocess
@@ -29,7 +30,7 @@ def _load_secret(name):
 
 # fetch_indicators 는 import 시점에 os.getenv 로 키를 읽어 모듈 상수에 저장하므로,
 # import 하기 전에 st.secrets 값을 os.environ 에 심어둬야 한다.
-for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD'):
+for _key in ('ECOS_API_KEY', 'FRED_API_KEY', 'DASHBOARD_PASSWORD', 'ANTHROPIC_API_KEY'):
     _val = _load_secret(_key)
     if _val and not os.environ.get(_key):
         os.environ[_key] = _val
@@ -40,6 +41,7 @@ import yfinance as yf
 import fetch_indicators
 import fetch_news
 import fetch_portfolio
+import stock_opinion
 
 DATA_DIR = 'data'
 
@@ -697,6 +699,60 @@ def render_rs_tab():
         st.warning(f'RS를 계산하지 못했습니다: {e}')
 
 
+# 같은 종목을 다시 입력했을 때 매번 유료 API를 다시 호출하지 않도록 길게 캐시한다.
+STOCK_OPINION_TTL_SEC = 6 * 60 * 60
+
+
+@st.cache_data(ttl=STOCK_OPINION_TTL_SEC, show_spinner=False)
+def fetch_stock_opinion(company_name):
+    return stock_opinion.generate_opinion(company_name)
+
+
+def render_stock_opinion_tab():
+    st.subheader('종목 분석')
+    st.caption(
+        '월스트리트 시니어 애널리스트 프레임워크(Narrative → Reverse DCF → DCF → Comps → '
+        '민감도)로 자동 분석합니다. 웹 검색을 포함해 1~5분 정도 걸릴 수 있습니다.'
+    )
+
+    if not os.environ.get('ANTHROPIC_API_KEY'):
+        st.info('ANTHROPIC_API_KEY 가 설정되어 있지 않아 이 탭을 쓸 수 없습니다. Secrets에 키를 추가해 주세요.')
+        return
+
+    company_name = st.text_input(
+        '종목명을 입력하세요', key='stock_opinion_input', placeholder='예: 삼성전자, Apple, 카카오',
+    )
+    run = st.button('분석하기', key='stock_opinion_run')
+
+    if run:
+        name = company_name.strip()
+        if not name:
+            st.warning('종목명을 입력해 주세요.')
+        else:
+            with st.spinner(f'{name} 분석 중입니다... (웹 검색 포함, 1~5분 소요될 수 있습니다)'):
+                text, error = fetch_stock_opinion(name)
+            if error:
+                st.warning(f'분석에 실패했습니다: {error}')
+            else:
+                st.session_state['stock_opinion_result'] = (name, text)
+
+    # 버튼을 누른 리런이 아니어도(다른 탭 조작 등으로 전체가 다시 그려질 때) 마지막
+    # 분석 결과가 사라지지 않도록 세션 상태에 저장해두고 매번 다시 그린다.
+    result = st.session_state.get('stock_opinion_result')
+    if result:
+        name, text = result
+        st.markdown(f'##### {name} 분석 결과')
+        st.markdown(
+            f'<div style="white-space: pre-wrap; line-height: 1.7;">{html.escape(text)}</div>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f'생성 시각: 방금 (같은 종목명은 최대 {STOCK_OPINION_TTL_SEC // 3600}시간 캐시) · '
+            f'출처: Anthropic API ({stock_opinion.ANTHROPIC_MODEL} + 웹 검색) · '
+            '투자 판단 참고용이며 투자 책임은 본인에게 있습니다.'
+        )
+
+
 def humanize_age(published_at, now):
     delta = now - published_at
     minutes = int(delta.total_seconds() // 60)
@@ -818,8 +874,8 @@ def main():
 
     interval = render_sidebar()
 
-    tab_market, tab_portfolio, tab_fx_news, tab_rs = st.tabs(
-        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스', 'RS 비교']
+    tab_market, tab_portfolio, tab_fx_news, tab_rs, tab_opinion = st.tabs(
+        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스', 'RS 비교', '종목 분석']
     )
 
     # 탭별로 "값이 자주 바뀌는 패널"(카드/지표/뉴스)만 자동 새로고침하고, 브리핑·장기
@@ -843,6 +899,9 @@ def main():
         # 사용자가 종목/기간/지수를 고르는 상호작용 탭이라 자동 새로고침 대상이 아니다
         # (자동 리런이 선택값을 방해하지 않게).
         render_rs_tab()
+
+    with tab_opinion:
+        render_stock_opinion_tab()
 
 
 if __name__ == '__main__':
