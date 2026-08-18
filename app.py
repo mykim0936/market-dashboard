@@ -377,6 +377,20 @@ def get_holdings_from_secrets():
 PER_TTL_SEC = 3600
 PER_LOOKBACK_DAYS = 5
 
+# DART(전자공시) 사업보고서에서 playmcp opendart 도구로 직접 확인한 EPS(주당순이익,
+# 원)다. 자동 조회가 아니라 보유 종목이 바뀔 때마다 여기도 손으로 다시 확인해서
+# 채워야 한다 — DART는 종목별 EPS만 주고 시가는 안 주므로, PER은 이 EPS에 그날의
+# 현재가를 나눠 직접 계산한다(더 오래된 연도 EPS라도 최신 시가를 반영한 PER이 됨).
+# 순손실(EPS<=0)인 종목은 PER이 의미가 없어 None으로 둔다.
+DART_EPS = {
+    '214430': {'eps': 2657, 'source': '2025 사업보고서 개별(OFS, 연결 미제출)'},  # 아이쓰리시스템
+    '050890': {'eps': 610, 'source': '2025 사업보고서 연결(CFS)'},               # 쏠리드
+    '457190': {'eps': 26, 'source': '2025 사업보고서 연결(CFS)'},                # 이수스페셜티케미컬
+    '348370': {'eps': None, 'source': '2025 사업보고서 연결(CFS) — 순손실(EPS -3,154원)'},  # 엔켐
+    '489790': {'eps': 902, 'source': '2025 사업보고서 연결(CFS)'},               # 한화비전
+    '051980': {'eps': None, 'source': '2025 사업보고서 연결(CFS) — 순손실(EPS -53원)'},     # 중앙첨단소재
+}
+
 
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
@@ -397,11 +411,15 @@ def fetch_per_universe(market):
 
 
 def attach_per_columns(stocks):
-    """보유 종목 각각에 자기 PER과 "업계 PER"(같은 시장·같은 업종 내 다른 종목들의
-    PER 중앙값, 적자로 PER이 의미 없는 0 이하 값은 제외)을 붙인다. ETF·상장 정보가
-    없는 종목·시장 구분이 없는 종목은 조용히 "-"(None)로 남긴다 — 표에서 이 함수
-    호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는
-    그대로 보여준다."""
+    """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
+    - 자기 PER: DART_EPS에 직접 확인해둔 종목은 (오늘 현재가 / DART EPS)로 계산하고,
+      거기 없는 종목(신규 보유 등)은 pykrx가 주는 KRX 자체 PER로 대체한다.
+    - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 pykrx PER 중앙값(적자로 PER이
+      의미 없는 0 이하 값은 제외) — DART는 종목별 재무제표만 주고 업종 분류/동종
+      비교 데이터는 없어서, 피어 비교는 pykrx 시장 전체 데이터로 계산한다.
+    ETF·상장 정보가 없는 종목·시장 구분이 없는 종목은 조용히 "-"(None)로 남긴다 —
+    표에서 이 함수 호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로
+    감싸 나머지 표는 그대로 보여준다."""
     stocks = stocks.copy()
     per_vals, industry_names, industry_pers = [], [], []
     universes = {}
@@ -409,31 +427,35 @@ def attach_per_columns(stocks):
     for _, row in stocks.iterrows():
         market = row.get('market')
         ticker = row['ticker']
-        if market not in ('KOSPI', 'KOSDAQ'):
-            per_vals.append(None)
+        current_price = row.get('current_price')
+
+        universe = None
+        if market in ('KOSPI', 'KOSDAQ'):
+            if market not in universes:
+                universes[market] = fetch_per_universe(market)
+            universe = universes[market]
+
+        dart = DART_EPS.get(ticker)
+        if dart is not None:
+            eps = dart['eps']
+            stock_per = current_price / eps if eps and current_price else None
+        elif universe is not None and not universe.empty and ticker in universe.index:
+            raw_per = universe.loc[ticker, 'PER']
+            stock_per = raw_per if raw_per and raw_per > 0 else None
+        else:
+            stock_per = None
+        per_vals.append(stock_per)
+
+        if universe is not None and not universe.empty and ticker in universe.index:
+            industry = universe.loc[ticker, '업종명']
+            peers = universe[
+                (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
+            ]
+            industry_names.append(industry)
+            industry_pers.append(peers['PER'].median() if not peers.empty else None)
+        else:
             industry_names.append(None)
             industry_pers.append(None)
-            continue
-
-        if market not in universes:
-            universes[market] = fetch_per_universe(market)
-        universe = universes[market]
-
-        if universe.empty or ticker not in universe.index:
-            per_vals.append(None)
-            industry_names.append(None)
-            industry_pers.append(None)
-            continue
-
-        stock_per = universe.loc[ticker, 'PER']
-        industry = universe.loc[ticker, '업종명']
-        per_vals.append(stock_per if stock_per and stock_per > 0 else None)
-        industry_names.append(industry)
-
-        peers = universe[
-            (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
-        ]
-        industry_pers.append(peers['PER'].median() if not peers.empty else None)
 
     stocks['per'] = per_vals
     stocks['industry_name'] = industry_names
@@ -639,9 +661,10 @@ def render_portfolio_panel():
     st.caption(file_caption(PORTFOLIO_CSV, 'FinanceDataReader (KRX 종가/등락률)') +
                ' · 비중은 현금 제외 주식 평가금액 대비')
     st.caption(
-        '업계 PER은 pykrx 기준 같은 시장(코스피/코스닥)·같은 업종 내 다른 종목들의 PER '
-        '중앙값(적자로 PER이 무의미한 종목은 제외)이며, ETF·해외 상장 종목·시장 구분이 '
-        '없는 종목은 "-"로 표시됩니다.'
+        'PER은 DART 전자공시(사업보고서) EPS 기준 직접 확인한 값에 오늘 현재가를 나눈 '
+        '것이고(순손실 종목은 PER 산정 불가로 "-"), 업계 PER은 pykrx 기준 같은 시장'
+        '(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값(적자 종목 제외)입니다. '
+        'ETF·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다.'
     )
 
 
