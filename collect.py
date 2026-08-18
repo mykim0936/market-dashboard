@@ -190,11 +190,13 @@ STATUS_JSON = os.path.join(DATA_DIR, 'status.json')
 PIPELINE_TIMEOUT_SEC = 180
 
 # collect() 이후 순서대로 실행할 후속 스크립트들 (task 이름, 파일명, quick 모드 포함 여부)
-# make_briefing 은 claude 호출이라 느려서 quick 모드에서는 건너뛴다.
+# make_briefing 은 claude 호출이라 느려서, collect_dart 는 DART/pykrx 벌크 조회라
+# 무거워서 quick 모드에서는 건너뛴다 — PER/재무 스냅샷은 하루 한 번이면 충분하다.
 PIPELINE_STEPS = [
     ('fetch_portfolio', 'fetch_portfolio.py', True),
     ('fetch_indicators', 'fetch_indicators.py', True),
     ('fetch_news', 'fetch_news.py', True),
+    ('collect_dart', 'collect_dart.py', False),
     ('make_briefing', 'make_briefing.py', False),
 ]
 

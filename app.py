@@ -5,6 +5,7 @@
 # - 로컬: collect.py가 10분마다 CSV를 써두므로 디스크만 읽어 빠르다.
 # - 클라우드: 스케줄러가 없으므로 data/*.csv 가 커밋되어 있지 않다 -> 매번 직접 조회.
 import html
+import json
 import os
 import socket
 import subprocess
@@ -125,6 +126,10 @@ DOWN_COLOR = '#1565C0'
 INDICATORS_CSV = os.path.join(DATA_DIR, 'indicators.csv')
 NEWS_CSV = os.path.join(DATA_DIR, 'news.csv')
 PORTFOLIO_CSV = os.path.join(DATA_DIR, 'portfolio_status.csv')
+# collect_dart.py가 로컬(주기적 스케줄러)에서 만들어 git에 커밋해두는 PER/재무
+# 스냅샷 — Streamlit Cloud에서 opendart.fss.or.kr/KRX 벌크 조회로의 접속이
+# 구조적으로 막혀 있어(2026-08 확인), 라이브 조회 대신 이 파일을 우선 쓴다.
+DART_SNAPSHOT_PATH = os.path.join(DATA_DIR, 'dart_snapshot.json')
 NEWS_LIMIT = 15
 
 CASH_TICKER = 'CASH'
@@ -391,6 +396,32 @@ PER_LOOKBACK_DAYS = 5
 DART_TTL_SEC = 24 * 60 * 60
 
 
+@st.cache_data(ttl=CACHE_TTL_SEC)
+def load_dart_snapshot():
+    """collect_dart.py가 로컬에서 만들어 커밋해둔 스냅샷 — 있으면 이걸 최우선으로
+    쓰고(클라우드에서 DART/pykrx 라이브 조회가 막혀 있어도 동작), 없으면(로컬에서
+    아직 한 번도 안 돌렸을 때 등) 호출부가 기존 라이브 조회로 대체한다."""
+    if not os.path.exists(DART_SNAPSHOT_PATH):
+        return {}
+    try:
+        with open(DART_SNAPSHOT_PATH, encoding='utf-8') as f:
+            return json.load(f).get('stocks', {})
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=CACHE_TTL_SEC)
+def load_dart_snapshot_generated_at():
+    """스냅샷 캡션에 쓸 생성 시각 — 없거나 못 읽으면 None."""
+    if not os.path.exists(DART_SNAPSHOT_PATH):
+        return None
+    try:
+        with open(DART_SNAPSHOT_PATH, encoding='utf-8') as f:
+            return json.load(f).get('generated_at')
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_corp_map():
     """종목코드 -> DART corp_code 매핑(전체 상장사, 수 MB짜리 벌크 조회) — 자주 안
@@ -462,16 +493,18 @@ def diagnose_pykrx():
 
 def attach_per_columns(stocks):
     """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
-    - 자기 PER: DART Open API로 확인한 EPS가 있으면 (오늘 현재가 / DART EPS)로
-      계산하고(OPENDART_API_KEY 미설정이거나 조회 실패 시), pykrx가 주는 KRX 자체
-      PER로 대체한다.
-    - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 pykrx PER 중앙값(적자로 PER이
-      의미 없는 0 이하 값은 제외) — DART는 종목별 재무제표만 주고 업종 분류/동종
-      비교 데이터는 없어서, 피어 비교는 pykrx 시장 전체 데이터로 계산한다.
-    ETF·상장 정보가 없는 종목·시장 구분이 없는 종목은 조용히 "-"(None)로 남긴다 —
-    표에서 이 함수 호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로
-    감싸 나머지 표는 그대로 보여준다."""
+    - 자기 PER: collect_dart.py가 만들어둔 로컬 스냅샷의 EPS가 있으면 그걸 오늘
+      현재가와 결합해 계산한다(스냅샷 EPS는 분기/연 단위라 오래돼도 되지만, 가격은
+      항상 최신을 쓴다). 스냅샷에 없으면 라이브 DART 조회, 그것도 안 되면 pykrx
+      자체 PER 순으로 대체한다.
+    - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 PER 중앙값(적자로 PER이 의미
+      없는 0 이하 값은 제외) — 스냅샷에 미리 계산돼 있으면 그걸 쓰고, 없으면 pykrx
+      시장 전체 데이터를 라이브로 받아 계산한다.
+    스냅샷과 라이브 조회 둘 다 실패하면 조용히 "-"(None)로 남긴다 — 표에서 이 함수
+    호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는
+    그대로 보여준다."""
     stocks = stocks.copy()
+    snapshot = load_dart_snapshot()
     per_vals, industry_names, industry_pers = [], [], []
     universes = {}
 
@@ -479,19 +512,24 @@ def attach_per_columns(stocks):
         market = row.get('market')
         ticker = row['ticker']
         current_price = row.get('current_price')
+        snap = snapshot.get(ticker)
 
+        eps = snap.get('eps') if snap else None
+        if eps is None and (not snap or 'eps' not in snap):
+            try:
+                eps, _, _ = fetch_dart_eps_cached(ticker)
+            except Exception:
+                # DART 쪽이 죽어도(네트워크 장애 등) 아래 pykrx 기반 PER·업계 PER
+                # 계산까지 같이 죽지 않게 여기서 막는다.
+                eps = None
+
+        need_universe = eps is None or not snap or snap.get('industry_per') is None
         universe = None
-        if market in ('KOSPI', 'KOSDAQ'):
+        if need_universe and market in ('KOSPI', 'KOSDAQ'):
             if market not in universes:
                 universes[market] = fetch_per_universe(market)
             universe = universes[market]
 
-        try:
-            eps, _, _ = fetch_dart_eps_cached(ticker)
-        except Exception:
-            # DART 쪽이 죽어도(네트워크 장애 등) 아래 pykrx 기반 PER·업계 PER
-            # 계산까지 같이 죽지 않게 여기서 막는다.
-            eps = None
         if eps is not None:
             stock_per = current_price / eps if eps > 0 and current_price else None
         elif universe is not None and not universe.empty and ticker in universe.index:
@@ -501,7 +539,10 @@ def attach_per_columns(stocks):
             stock_per = None
         per_vals.append(stock_per)
 
-        if universe is not None and not universe.empty and ticker in universe.index:
+        if snap and snap.get('industry_per') is not None:
+            industry_names.append(snap.get('industry_name'))
+            industry_pers.append(snap.get('industry_per'))
+        elif universe is not None and not universe.empty and ticker in universe.index:
             industry = universe.loc[ticker, '업종명']
             peers = universe[
                 (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
@@ -725,8 +766,9 @@ def render_portfolio_panel():
 
 def render_stock_detail_panel():
     """보유 종목 하나를 골라 최근 5개년 매출·영업이익·영업이익률과, 주가·연간
-    영업이익을 함께 보는 추이 그래프를 보여준다. DART Open API(OPENDART_API_KEY)로
-    실시간 조회하므로 보유 종목이 바뀌어도 별도 작업 없이 그대로 동작한다."""
+    영업이익을 함께 보는 추이 그래프를 보여준다. collect_dart.py가 로컬에서 만들어
+    커밋해둔 스냅샷을 최우선으로 쓰고, 없으면 DART Open API(OPENDART_API_KEY)로
+    실시간 조회한다(단, 이 호스팅 환경에서는 DART 접속이 막혀 있을 수 있음)."""
     st.subheader('종목 상세')
 
     with st.expander('🔧 진단 정보 (DART/pykrx 연결 문제 확인용)'):
@@ -755,21 +797,31 @@ def render_stock_detail_panel():
         st.info('보유 종목이 없어 상세 재무를 볼 수 없습니다.')
         return
 
-    if not os.environ.get('OPENDART_API_KEY'):
-        st.info('OPENDART_API_KEY 가 설정되어 있지 않아 종목 상세 재무를 불러올 수 없습니다. Secrets에 키를 추가해 주세요.')
-        return
-
     selected_name = st.selectbox('상세히 볼 종목', holdings['name'].tolist(), key='detail_stock')
     ticker = str(holdings.loc[holdings['name'] == selected_name, 'ticker'].iloc[0])
 
-    with st.spinner('DART에서 재무 데이터를 불러오는 중...'):
-        years, fs_div = fetch_dart_financials_cached(ticker)
+    # collect_dart.py가 로컬에서 만들어 커밋해둔 스냅샷을 최우선으로 쓴다 — 클라우드
+    # 에서 DART 라이브 조회가 막혀 있어도(2026-08 확인) 이 파일만 있으면 동작한다.
+    snapshot = load_dart_snapshot()
+    snap = snapshot.get(ticker)
+    if snap and snap.get('financials'):
+        years, fs_div = snap['financials'], snap.get('financials_fs_div')
+        source_note = f"스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py)"
+    elif os.environ.get('OPENDART_API_KEY'):
+        with st.spinner('DART에서 재무 데이터를 불러오는 중...'):
+            years, fs_div = fetch_dart_financials_cached(ticker)
+        source_note = 'DART 사업보고서 (자동 조회, 하루 캐시)'
+    else:
+        years, fs_div = [], None
+        source_note = None
+
     if not years:
         st.info(
             f'{selected_name}의 DART 재무 데이터를 찾지 못했습니다. '
-            'ETF·비상장·최근 상장 종목이라 데이터가 없거나, 이 서버에서 DART로의 '
-            '접속 자체가 막혀 있을 수 있습니다(호스팅 환경에 따라 opendart.fss.or.kr '
-            '접속이 차단되는 경우가 있습니다 — 위 "진단 정보"에서 확인 가능).'
+            'ETF·비상장·최근 상장 종목이라 데이터가 없거나, 로컬 스냅샷에 없고 '
+            '이 서버에서 DART로의 접속 자체가 막혀 있을 수 있습니다(호스팅 환경에 '
+            '따라 opendart.fss.or.kr 접속이 차단되는 경우가 있습니다 — 위 '
+            '"진단 정보"에서 확인 가능).'
         )
         return
 
@@ -790,7 +842,7 @@ def render_stock_detail_panel():
     )
 
     partial_notes = [f"{y['year']}년: {y['partial']}" for y in years if y.get('partial')]
-    caption = f'출처: DART 사업보고서 {fs_div or ""} (자동 조회, 하루 캐시)'
+    caption = f'출처: {source_note} · {fs_div or ""}'
     if partial_notes:
         caption += ' · 부분 실적 ' + ', '.join(partial_notes)
     st.caption(caption)
