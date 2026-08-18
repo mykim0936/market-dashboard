@@ -594,42 +594,57 @@ def render_briefing_panel():
     )
 
 
+# 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
+# 절반으로 줄어드는 만큼 세로도 같이 줄여야 차트 비율이 과하게 길쭉해지지 않는다.
+CHART_GRID_HEIGHT = 260
+
+
 def render_index_charts(series_list):
-    for label, filename, source, code in series_list:
-        st.subheader(label)
-        selected_period = st.radio(
-            f'{label} 기간', list(CHART_PERIODS),
-            index=len(CHART_PERIODS) - 1,  # 기본값 '전체' — 이전까지의 동작을 그대로 유지
-            horizontal=True, key=f'chart_period_{filename}', label_visibility='collapsed',
-        )
-        live_label = None
-        try:
-            df, live_label = get_series(filename, source, code, CHART_YEARS)
+    """지수/환율 차트를 가로 2개씩 2xN 그리드로 배치한다."""
+    for i in range(0, len(series_list), 2):
+        cols = st.columns(2)
+        for col, series in zip(cols, series_list[i:i + 2]):
+            with col:
+                _render_one_index_chart(series)
+
+
+def _render_one_index_chart(series):
+    label, filename, source, code = series
+    st.subheader(label)
+    selected_period = st.radio(
+        f'{label} 기간', list(CHART_PERIODS),
+        index=len(CHART_PERIODS) - 1,  # 기본값 '전체' — 이전까지의 동작을 그대로 유지
+        horizontal=True, key=f'chart_period_{filename}', label_visibility='collapsed',
+    )
+    live_label = None
+    try:
+        df, live_label = get_series(filename, source, code, CHART_YEARS)
+        if df.empty:
+            raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
+        period_start = CHART_PERIODS[selected_period]
+        if period_start is not None:
+            df = df[df.index >= period_start(pd.Timestamp.now()).normalize()]
             if df.empty:
-                raise ValueError('데이터 소스가 빈 결과를 반환했습니다')
-            period_start = CHART_PERIODS[selected_period]
-            if period_start is not None:
-                df = df[df.index >= period_start(pd.Timestamp.now()).normalize()]
-                if df.empty:
-                    raise ValueError('선택한 기간에 해당하는 데이터가 없습니다')
-            chart_df = df[['Close']].reset_index()
-            chart = (
-                alt.Chart(chart_df)
-                .mark_line(color=NEUTRAL_CHART_COLOR)
-                .encode(
-                    x=alt.X('Date:T', title=None),
-                    y=alt.Y('Close:Q', title=None, scale=alt.Scale(zero=False)),
-                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', format=',.2f')],
-                )
-                .interactive()  # 스크롤 확대/축소 + 드래그 이동을 활성화한다
+                raise ValueError('선택한 기간에 해당하는 데이터가 없습니다')
+        chart_df = df[['Close']].reset_index()
+        chart = (
+            alt.Chart(chart_df)
+            .mark_line(color=NEUTRAL_CHART_COLOR)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('Close:Q', title=None, scale=alt.Scale(zero=False)),
+                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', format=',.2f')],
             )
-            st.altair_chart(chart, use_container_width=True)
-        except Exception as e:
-            st.warning(f"차트를 불러오지 못했습니다: {e}")
-        # live_label 은 라이브 조회 시 실제로 쓰인 출처(폴백 포함)를 반영한다.
-        # 로컬 CSV를 읽었을 때는 None 이므로 설정된 기본 출처로 표시한다.
-        source_label = live_label or ('pykrx (KRX)' if source == 'pykrx' else 'yfinance')
-        st.caption(file_caption(os.path.join(DATA_DIR, filename), source_label))
+            .properties(height=CHART_GRID_HEIGHT)
+            .interactive()  # 스크롤 확대/축소 + 드래그 이동을 활성화한다
+        )
+        st.altair_chart(chart, use_container_width=True)
+    except Exception as e:
+        st.warning(f"차트를 불러오지 못했습니다: {e}")
+    # live_label 은 라이브 조회 시 실제로 쓰인 출처(폴백 포함)를 반영한다.
+    # 로컬 CSV를 읽었을 때는 None 이므로 설정된 기본 출처로 표시한다.
+    source_label = live_label or ('pykrx (KRX)' if source == 'pykrx' else 'yfinance')
+    st.caption(file_caption(os.path.join(DATA_DIR, filename), source_label))
 
 
 def render_rs_tab():
