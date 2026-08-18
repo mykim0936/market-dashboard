@@ -444,16 +444,18 @@ def fetch_per_universe(market):
 
 def diagnose_pykrx():
     """진단용 — fetch_per_universe는 실패 사유를 다 삼켜버리므로, 실제 원인(로그인
-    실패/네트워크 차단/데이터 없음)을 구분하려면 이걸로 직접 확인한다."""
-    result = {}
-    d = datetime.now().strftime('%Y%m%d')
-    try:
-        df = pykrx_stock.get_market_fundamental(d, market='KOSPI')
-        result['row_count'] = len(df)
-        result['columns'] = list(df.columns)
-    except Exception as e:
-        result['exception'] = f'{type(e).__name__}: {e}'
-    return result
+    실패/네트워크 차단/당일 데이터 미집계 등)을 구분하려면 이걸로 직접 확인한다.
+    fetch_per_universe와 같은 방식으로 최근 며칠을 날짜별로 각각 시도해서, 특정
+    날짜만 문제인지(예: 장중이라 당일 데이터 미집계) 아니면 전부 막혀 있는지 본다."""
+    days = {}
+    for delta in range(PER_LOOKBACK_DAYS):
+        d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
+        try:
+            df = pykrx_stock.get_market_fundamental(d, market='KOSPI')
+            days[d] = {'row_count': len(df), 'columns': list(df.columns)}
+        except Exception as e:
+            days[d] = {'exception': f'{type(e).__name__}: {e}'}
+    return days
 
 
 def attach_per_columns(stocks):
