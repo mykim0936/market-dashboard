@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-18T16:03:56.781301+00:00",
+  "generated_at": "2026-08-19T01:42:08.363373+00:00",
   "stocks": {
     "214430": {
       "eps": 2657.0,
@@ -72,20 +72,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": -128.01436218,
-          "operating_income": -31.442533500000003
+          "revenue": 253.05386866,
+          "operating_income": 26.45038665
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": 70.83001979999997,
-          "operating_income": 15.715690360000004
+          "revenue": 323.88388846,
+          "operating_income": 42.16607701
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 918.87360969,
-          "operating_income": 122.41436092999999
+          "revenue": 284.75151019,
+          "operating_income": 38.07105412999999
         },
         {
           "year": 2026,
@@ -96,14 +96,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": 71.04475991000004,
-          "operating_income": 3.8482495599999993
+          "revenue": 394.75966068,
+          "operating_income": 47.59291456
         }
       ],
       "quarterly_fs_div": "OFS",
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 14.094999999999999
+      "industry_per": 13.77
     },
     "050890": {
       "eps": 610.0,
@@ -176,20 +176,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": 4.709468920000063,
-          "operating_income": 38.81630014
+          "revenue": 562.22016651,
+          "operating_income": 41.42342138
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": 137.84335971999997,
-          "operating_income": -13.51476834
+          "revenue": 700.06352623,
+          "operating_income": 27.90865304
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 2248.23976605,
-          "operating_income": 304.91808352
+          "revenue": 1128.5089019499999,
+          "operating_income": 260.8875409
         },
         {
           "year": 2026,
@@ -200,14 +200,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": 63.971831849999944,
-          "operating_income": 56.62701133
+          "revenue": 701.30784805,
+          "operating_income": 35.36137933
         }
       ],
       "quarterly_fs_div": "CFS",
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 14.094999999999999
+      "industry_per": 13.77
     },
     "457190": {
       "eps": 26.0,
@@ -244,20 +244,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": 8.097934750000036,
-          "operating_income": -107.49674901
+          "revenue": 997.0778956,
+          "operating_income": -46.52559392
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": 42.783155270000066,
-          "operating_income": 31.917444409999998
+          "revenue": 1039.86105087,
+          "operating_income": -14.60814951
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 3074.8425591299992,
-          "operating_income": 30.76070951
+          "revenue": 1088.7847026799996,
+          "operating_income": 16.31514834
         },
         {
           "year": 2026,
@@ -268,14 +268,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": -5.425109999999904,
-          "operating_income": 42.56298
+          "revenue": 1080.29149,
+          "operating_income": 77.37005
         }
       ],
       "quarterly_fs_div": "CFS",
       "market": "KOSPI",
       "industry_name": "화학",
-      "industry_per": 11.91
+      "industry_per": 11.64
     },
     "348370": {
       "eps": -3154.0,
@@ -330,20 +330,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": -41.5077951799999,
-          "operating_income": 164.29034332999998
+          "revenue": 640.72848151,
+          "operating_income": -27.33407943
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": 261.7945992399999,
-          "operating_income": -244.8231067
+          "revenue": 902.52308075,
+          "operating_income": -272.15718613
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 2225.41734153,
-          "operating_income": -511.70939322000004
+          "revenue": 902.4525833299999,
+          "operating_income": -292.75089103000005
         },
         {
           "year": 2026,
@@ -354,14 +354,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": 182.09369873000003,
-          "operating_income": 126.44577522
+          "revenue": 1023.20994523,
+          "operating_income": -115.68412616
         }
       ],
       "quarterly_fs_div": "CFS",
       "market": "KOSDAQ",
       "industry_name": "화학",
-      "industry_per": 13.184999999999999
+      "industry_per": 13.195
     },
     "489790": {
       "eps": 902.0,
@@ -392,20 +392,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": 53.55992144999982,
-          "operating_income": 119.70756382000002
+          "revenue": 4571.61852438,
+          "operating_income": 562.6789406
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": -344.1946082000004,
-          "operating_income": -251.10797105000006
+          "revenue": 4227.42391618,
+          "operating_income": 311.57096955
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 13681.79477507,
-          "operating_income": 1311.1010738100001
+          "revenue": 4592.11764776,
+          "operating_income": 305.4507564300002
         },
         {
           "year": 2026,
@@ -416,14 +416,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": 1009.1111768000001,
-          "operating_income": 434.85331011
+          "revenue": 5422.8892473,
+          "operating_income": 655.78457512
         }
       ],
       "quarterly_fs_div": "CFS",
       "market": "KOSPI",
       "industry_name": "전기·전자",
-      "industry_per": 37.225
+      "industry_per": 37.055
     },
     "051980": {
       "eps": -53.0,
@@ -496,20 +496,20 @@
         {
           "year": 2025,
           "quarter": 2,
-          "revenue": 16.73643043,
-          "operating_income": 6.098684819999999
+          "revenue": 50.14597161,
+          "operating_income": -10.16204059
         },
         {
           "year": 2025,
           "quarter": 3,
-          "revenue": -8.687514289999996,
-          "operating_income": -0.9146329400000006
+          "revenue": 41.45845732,
+          "operating_income": -11.07667353
         },
         {
           "year": 2025,
           "quarter": 4,
-          "revenue": 156.63305921,
-          "operating_income": -34.55238132
+          "revenue": 73.07754642,
+          "operating_income": -8.129615320000006
         },
         {
           "year": 2026,
@@ -520,14 +520,14 @@
         {
           "year": 2026,
           "quarter": 2,
-          "revenue": 25.74005708,
-          "operating_income": 12.7157211
+          "revenue": 48.99947039,
+          "operating_income": -10.45496911
         }
       ],
       "quarterly_fs_div": "CFS",
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 14.2
+      "industry_per": 13.84
     }
   }
 }
