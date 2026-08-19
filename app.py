@@ -1476,16 +1476,27 @@ STOCK_OPINION_TTL_SEC = 6 * 60 * 60
 
 
 @st.cache_data(ttl=STOCK_OPINION_TTL_SEC, show_spinner=False)
-def fetch_stock_opinion(company_name):
-    return stock_opinion.generate_opinion(company_name)
+def fetch_stock_opinion(company_name, mode):
+    return stock_opinion.generate_opinion(company_name, mode=mode)
+
+
+# (표시 라벨, stock_opinion.py의 mode 키, 설명) — 라디오에 순서대로 나온다.
+STOCK_OPINION_MODES = [
+    ('월스트리트 DCF/Comps', 'dcf',
+     'Narrative → Reverse DCF → DCF → Comps → 민감도 순으로, 숫자를 정밀하게 계산해 적정가를 추정합니다.'),
+    ('테마·모트 분석', 'theme',
+     '섹터 사이클 진단 → 모트(독점력) 평가 → 정책 촉매 → 상대 밸류에이션 → 지수 대비 상대강도 순으로, '
+     '"이 회사가 산업 구조상 대체 가능한가"를 먼저 판단하는 방식입니다.'),
+]
 
 
 def render_stock_opinion_tab():
     st.subheader('종목 분석')
-    st.caption(
-        '월스트리트 시니어 애널리스트 프레임워크(Narrative → Reverse DCF → DCF → Comps → '
-        '민감도)로 자동 분석합니다. 웹 검색을 포함해 1~5분 정도 걸릴 수 있습니다.'
-    )
+
+    mode_labels = [label for label, _, _ in STOCK_OPINION_MODES]
+    selected_label = st.radio('분석 방식', mode_labels, horizontal=True, key='stock_opinion_mode')
+    _, mode, mode_desc = next(m for m in STOCK_OPINION_MODES if m[0] == selected_label)
+    st.caption(f'{mode_desc} 웹 검색을 포함해 1~5분 정도 걸릴 수 있습니다.')
 
     if not os.environ.get('OPENAI_API_KEY'):
         st.info('OPENAI_API_KEY 가 설정되어 있지 않아 이 탭을 쓸 수 없습니다. Secrets에 키를 추가해 주세요.')
@@ -1502,24 +1513,24 @@ def render_stock_opinion_tab():
             st.warning('종목명을 입력해 주세요.')
         else:
             with st.spinner(f'{name} 분석 중입니다... (웹 검색 포함, 1~5분 소요될 수 있습니다)'):
-                text, error = fetch_stock_opinion(name)
+                text, error = fetch_stock_opinion(name, mode)
             if error:
                 st.warning(f'분석에 실패했습니다: {error}')
             else:
-                st.session_state['stock_opinion_result'] = (name, text)
+                st.session_state['stock_opinion_result'] = (name, selected_label, text)
 
     # 버튼을 누른 리런이 아니어도(다른 탭 조작 등으로 전체가 다시 그려질 때) 마지막
     # 분석 결과가 사라지지 않도록 세션 상태에 저장해두고 매번 다시 그린다.
     result = st.session_state.get('stock_opinion_result')
     if result:
-        name, text = result
-        st.markdown(f'##### {name} 분석 결과')
+        name, result_label, text = result
+        st.markdown(f'##### {name} 분석 결과 · {result_label}')
         st.markdown(
             f'<div style="white-space: pre-wrap; line-height: 1.7;">{html.escape(text)}</div>',
             unsafe_allow_html=True,
         )
         st.caption(
-            f'생성 시각: 방금 (같은 종목명은 최대 {STOCK_OPINION_TTL_SEC // 3600}시간 캐시) · '
+            f'생성 시각: 방금 (같은 종목명·분석 방식 조합은 최대 {STOCK_OPINION_TTL_SEC // 3600}시간 캐시) · '
             f'출처: OpenAI API ({stock_opinion.OPENAI_MODEL} + 웹 검색) · '
             '투자 판단 참고용이며 투자 책임은 본인에게 있습니다.'
         )
