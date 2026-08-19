@@ -449,6 +449,10 @@ def get_holdings_from_secrets():
     df['ticker'] = df['ticker'].astype(str).str.strip()
     df['quantity'] = pd.to_numeric(df['quantity'])
     df['avg_price'] = pd.to_numeric(df['avg_price'])
+    for col in ('target_price', 'stop_price'):
+        if col not in df.columns:
+            df[col] = pd.NA
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
 
@@ -622,6 +626,63 @@ def attach_per_columns(stocks):
     return stocks
 
 
+# MDD·52주 위치·거래량 배율 계산에 넉넉한 버퍼를 두고 최근 400일치를 받는다
+# (52주=약 252거래일 + 거래량 20일 평균 계산 여유분).
+RISK_LOOKBACK_DAYS = 400
+VOLUME_SURGE_RATIO = 2.0  # 20일 평균 대비 이 배수 이상이면 "급증"으로 표시
+
+
+def attach_risk_columns(stocks):
+    """보유 종목 각각에 리스크 지표 3개를 붙인다 — 전부 이미 받아오는 주가 시계열
+    (FDR)로 계산하고 새 API 호출은 없다.
+    - MDD(고점대비): 최근 52주 최고가 대비 현재가 낙폭(%). 음수만 나온다(현재가가
+      고점을 갱신 중이면 0%).
+    - 52주 위치(%): 최근 52주 최고~최저 구간에서 현재가가 몇 % 지점인지
+      (0%=52주 최저, 100%=52주 최고).
+    - 거래량 배율: 당일 거래량 / 직전 20거래일 평균 거래량. VOLUME_SURGE_RATIO
+      이상이면 "급증"으로 본다.
+    개별 종목 조회가 실패해도 그 종목만 "-"로 남고 나머지는 계속 계산한다."""
+    stocks = stocks.copy()
+    mdd_vals, pos52_vals, vol_ratio_vals = [], [], []
+
+    for _, row in stocks.iterrows():
+        ticker = row['ticker']
+        current_price = row.get('current_price')
+        try:
+            start_dt = datetime.now() - pd.Timedelta(days=RISK_LOOKBACK_DAYS)
+            price_df = fetch_stock_series(ticker, start_dt)
+        except Exception:
+            price_df = pd.DataFrame()
+
+        if price_df.empty or 'Close' not in price_df.columns or not current_price:
+            mdd_vals.append(None)
+            pos52_vals.append(None)
+            vol_ratio_vals.append(None)
+            continue
+
+        window = price_df.tail(252)  # 최근 약 52주 거래일
+        high_52w = window['Close'].max()
+        low_52w = window['Close'].min()
+
+        mdd_vals.append((current_price / high_52w - 1) * 100 if high_52w else None)
+        pos52_vals.append(
+            (current_price - low_52w) / (high_52w - low_52w) * 100
+            if high_52w and high_52w != low_52w else None
+        )
+
+        if 'Volume' in price_df.columns and len(price_df) >= 21:
+            recent_vol = price_df['Volume'].iloc[-1]
+            avg_vol = price_df['Volume'].iloc[-21:-1].mean()
+            vol_ratio_vals.append(recent_vol / avg_vol if avg_vol else None)
+        else:
+            vol_ratio_vals.append(None)
+
+    stocks['mdd'] = mdd_vals
+    stocks['pos_52w'] = pos52_vals
+    stocks['vol_ratio'] = vol_ratio_vals
+    return stocks
+
+
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
 def fetch_portfolio_live():
     holdings = get_holdings_from_secrets()  # 없으면 fetch_portfolio.py가 로컬 portfolio.csv로 폴백
@@ -635,11 +696,20 @@ def fetch_portfolio_live():
 
 def get_portfolio_df():
     if os.path.exists(PORTFOLIO_CSV):
-        return load_csv(PORTFOLIO_CSV)
-    try:
-        return fetch_portfolio_live()
-    except FileNotFoundError:
-        return None  # Secrets도 없고 로컬 portfolio.csv도 없는 경우
+        df = load_csv(PORTFOLIO_CSV)
+    else:
+        try:
+            df = fetch_portfolio_live()
+        except FileNotFoundError:
+            return None  # Secrets도 없고 로컬 portfolio.csv도 없는 경우
+    # target_price/stop_price는 로컬 portfolio_status.csv가 이 컬럼이 생기기 전에
+    # 만들어졌을 수도 있으니(다음 스케줄러 실행 전까지), 없으면 만들어 채워둔다.
+    for col in ('target_price', 'stop_price'):
+        if col not in df.columns:
+            df[col] = pd.NA
+        else:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
 
 
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
@@ -873,6 +943,93 @@ def render_portfolio_panel():
     )
 
 
+def style_risk_table(df):
+    """손절가까지(%)가 음수면(이미 손절가 밑으로 내려왔으면) 빨강, 목표가까지(%)가
+    음수면(이미 목표가를 넘었으면) 초록으로 강조한다."""
+    def color_stop(v):
+        if pd.isna(v):
+            return ''
+        return f'color: {UP_COLOR}; font-weight: 700' if v < 0 else ''
+
+    def color_target(v):
+        if pd.isna(v):
+            return ''
+        return f'color: {SWISS_GREEN}; font-weight: 700' if v < 0 else ''
+
+    return (
+        df.style
+        .map(color_stop, subset=['손절가까지(%)'])
+        .map(color_target, subset=['목표가까지(%)'])
+        .format({
+            '현재가': '{:,.0f}',
+            '고점대비(%)': '{:.1f}',
+            '52주 위치(%)': '{:.0f}',
+            '거래량배율': '{:.1f}x',
+            '목표가': '{:,.0f}',
+            '목표가까지(%)': '{:+.1f}',
+            '손절가': '{:,.0f}',
+            '손절가까지(%)': '{:+.1f}',
+        }, na_rep='-')
+    )
+
+
+def render_risk_panel():
+    """보유 종목별 리스크·타이밍 지표 — MDD(52주 고점대비 낙폭), 52주 최고/최저 대비
+    현재 위치, 당일 거래량 배율, 목표가·손절가 진행률을 한 표로 모아 보여준다.
+    전부 이미 받아오는 주가 시계열로 계산해서 추가 API 호출이 없다."""
+    st.subheader('리스크 지표')
+
+    portfolio_df = get_portfolio_df()
+    if portfolio_df is None or portfolio_df.empty:
+        st.info('보유 종목이 없어 리스크 지표를 볼 수 없습니다.')
+        return
+
+    stocks = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
+    if stocks.empty:
+        st.info('보유 종목이 없어 리스크 지표를 볼 수 없습니다.')
+        return
+
+    with st.spinner('리스크 지표 계산 중...'):
+        try:
+            stocks = attach_risk_columns(stocks)
+        except Exception as e:
+            st.warning(f'리스크 지표를 계산하지 못했습니다: {e}')
+            return
+
+    target = pd.to_numeric(stocks.get('target_price'), errors='coerce')
+    stop = pd.to_numeric(stocks.get('stop_price'), errors='coerce')
+    current = pd.to_numeric(stocks['current_price'], errors='coerce')
+
+    table = pd.DataFrame({
+        '종목명': stocks['name'],
+        '현재가': current,
+        '고점대비(%)': stocks['mdd'],
+        '52주 위치(%)': stocks['pos_52w'],
+        '거래량배율': stocks['vol_ratio'],
+        '목표가': target,
+        '목표가까지(%)': (target - current) / current * 100,
+        '손절가': stop,
+        '손절가까지(%)': (current - stop) / current * 100,
+    })
+
+    st.dataframe(style_risk_table(table), width='stretch', hide_index=True)
+
+    surging = table[table['거래량배율'] >= VOLUME_SURGE_RATIO]['종목명'].tolist()
+    if surging:
+        st.info(f'거래량 급증({VOLUME_SURGE_RATIO:.0f}배 이상): ' + ', '.join(surging))
+
+    breached = table[table['손절가까지(%)'] < 0]['종목명'].tolist()
+    if breached:
+        st.warning(f'손절가 이탈: {", ".join(breached)} — 대응 원칙을 다시 확인하세요.')
+
+    st.caption(
+        '고점대비(MDD)·52주 위치·거래량배율은 최근 52주 종가 기준(FDR). '
+        '목표가·손절가는 portfolio.csv(또는 Secrets)의 target_price/stop_price에 '
+        '직접 입력해야 나옵니다 — 비워두면 "-"로 표시됩니다. '
+        f'거래량배율 {VOLUME_SURGE_RATIO:.0f}배 이상은 급증으로 안내합니다.'
+    )
+
+
 def _build_revenue_oi_chart(items, x_labels):
     """매출액·영업이익은 그룹 막대(회색/초록), 영업이익률은 흰색 꺾은선(보조축)으로
     겹쳐 그린다. items는 x_labels와 순서가 1:1로 대응하는 {'revenue':, 'operating_income':} 리스트."""
@@ -954,6 +1111,78 @@ def _render_growth_metrics(items, period_type):
         '증감률은 위 차트와 같은 구간(최신 항목) 기준입니다. '
         '분기별 QoQ는 계절성이 큰 업종에서는 왜곡될 수 있어 YoY와 함께 봅니다.'
     )
+
+
+MA_WINDOWS = (20, 60, 120)
+MA_LOOKBACK_DAYS = 420  # 120일 이동평균이 초반부터 안정되도록 넉넉히 받고, 표시는 최근 180거래일만
+MA_DISPLAY_DAYS = 180
+
+
+def _render_moving_average_section(ticker, selected_name):
+    """20·60·120일 이동평균선을 주가에 겹쳐 그리고, 현재가가 각 이동평균선 대비
+    얼마나 떨어져 있는지(이격도, %)를 카드로 보여준다. 이격도가 크게 벌어져 있으면
+    추세가 과열/과매도 상태일 수 있다는 뜻으로 흔히 쓰인다."""
+    st.subheader('이동평균선 · 이격도')
+
+    try:
+        start_dt = datetime.now() - pd.Timedelta(days=MA_LOOKBACK_DAYS)
+        with st.spinner('이동평균 계산 중...'):
+            price_df = fetch_stock_series(ticker, start_dt)
+    except Exception as e:
+        st.warning(f'주가 데이터를 불러오지 못했습니다: {e}')
+        return
+
+    if price_df.empty or len(price_df) < MA_WINDOWS[0]:
+        st.info('이동평균을 계산할 만큼 주가 데이터가 충분하지 않습니다.')
+        return
+
+    ma_df = price_df[['Close']].copy()
+    for window in MA_WINDOWS:
+        ma_df[f'MA{window}'] = ma_df['Close'].rolling(window=window).mean()
+    display_df = ma_df.tail(MA_DISPLAY_DAYS).reset_index()
+    date_col = display_df.columns[0]
+    display_df = display_df.rename(columns={date_col: 'Date', 'Close': '주가'})
+
+    ma_colors = {'MA20': SWISS_GREEN, 'MA60': SWISS_GRAY, 'MA120': SWISS_GRAY}
+    ma_dash = {'MA20': [1, 0], 'MA60': [1, 0], 'MA120': [5, 3]}
+
+    price_line = (
+        alt.Chart(display_df)
+        .mark_line(color=SWISS_WHITE)
+        .encode(
+            x=alt.X('Date:T', title=None),
+            y=alt.Y('주가:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+            tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('주가:Q', title='주가', format=',.0f')],
+        )
+    )
+    ma_lines = [
+        alt.Chart(display_df)
+        .mark_line(color=ma_colors[f'MA{w}'], strokeDash=ma_dash[f'MA{w}'])
+        .encode(
+            x=alt.X('Date:T', title=None),
+            y=alt.Y(f'MA{w}:Q', title=None),
+            tooltip=[alt.Tooltip('Date:T'), alt.Tooltip(f'MA{w}:Q', title=f'{w}일선', format=',.0f')],
+        )
+        for w in MA_WINDOWS
+    ]
+    chart = alt.layer(price_line, *ma_lines).properties(height=320).interactive()
+
+    ma_chart_col, _ = st.columns(2)
+    with ma_chart_col:
+        st.altair_chart(chart, use_container_width=True)
+    st.caption(
+        f'{selected_name} 주가(흰색)와 20일선(초록 실선)·60일선(회색 실선)·120일선'
+        '(회색 점선). 최근 180거래일만 표시하되, 이동평균 자체는 그 이전 데이터까지 '
+        '포함해 계산합니다.'
+    )
+
+    current = display_df['주가'].iloc[-1]
+    cols = st.columns(len(MA_WINDOWS))
+    for col, window in zip(cols, MA_WINDOWS):
+        ma_value = display_df[f'MA{window}'].iloc[-1]
+        gap = (current - ma_value) / ma_value * 100 if pd.notna(ma_value) and ma_value else None
+        col.metric(f'{window}일선 이격도', f'{gap:+.1f}%' if gap is not None else '-', delta_color='off')
+    st.caption('이격도 = (현재가 − 이동평균) / 이동평균 × 100. 양수면 이동평균 위, 음수면 아래에 있다는 뜻입니다.')
 
 
 def render_stock_detail_panel():
@@ -1097,6 +1326,8 @@ def render_stock_detail_panel():
                     )
             except Exception as e:
                 st.warning(f'그래프를 그리지 못했습니다: {e}')
+
+    _render_moving_average_section(ticker, selected_name)
 
 
 # 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
@@ -1432,6 +1663,9 @@ def main():
 
     with tab_portfolio:
         st.fragment(run_every=interval)(render_portfolio_live)()
+        st.divider()
+        # 종목마다 시계열을 새로 받아야 해서 무거워 자동 새로고침 대상이 아니다.
+        render_risk_panel()
         st.divider()
         # 종목 선택 상호작용 패널이라 자동 새로고침 대상이 아니다(RS 탭과 같은 이유).
         render_stock_detail_panel()

@@ -34,11 +34,17 @@ LISTING_BACKOFF_SEC = 5
 
 
 def load_holdings():
-    """보유 종목 설정을 읽는다. 티커는 앞자리 0이 잘리지 않도록 문자열로 고정."""
+    """보유 종목 설정을 읽는다. 티커는 앞자리 0이 잘리지 않도록 문자열로 고정.
+    target_price(목표가)·stop_price(손절가)는 선택 항목 — portfolio.csv에 아직
+    없거나 특정 종목만 비워뒀어도 되게, 없으면 컬럼 자체를 만들어 NaN으로 채운다."""
     df = pd.read_csv(PORTFOLIO_CSV, encoding='utf-8-sig', dtype={'ticker': str})
     df['ticker'] = df['ticker'].str.strip()
     df['quantity'] = pd.to_numeric(df['quantity'])
     df['avg_price'] = pd.to_numeric(df['avg_price'])
+    for col in ('target_price', 'stop_price'):
+        if col not in df.columns:
+            df[col] = pd.NA
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
 
@@ -110,6 +116,8 @@ def build_rows(holdings, listing):
                 'eval_amount': buy_amount,
                 'profit': 0.0,
                 'profit_pct': 0.0,
+                'target_price': None,
+                'stop_price': None,
             })
             continue
 
@@ -140,6 +148,8 @@ def build_rows(holdings, listing):
             'eval_amount': eval_amount,
             'profit': profit,
             'profit_pct': profit / buy_amount * 100 if buy_amount else 0.0,
+            'target_price': h.get('target_price') if pd.notna(h.get('target_price')) else None,
+            'stop_price': h.get('stop_price') if pd.notna(h.get('stop_price')) else None,
         })
         print(f"[OK] {h['name']}({ticker}): {current:,.0f}원 ({q['change_pct']:+.2f}%)")
 
