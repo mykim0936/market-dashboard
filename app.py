@@ -1026,78 +1026,77 @@ def render_stock_detail_panel():
         st.info(f'{selected_name}의 {period_type} 재무 데이터를 찾지 못했습니다.')
         return
 
-    chart_col, _ = st.columns(2)
-    with chart_col:
+    col_left, col_right = st.columns(2)
+
+    with col_left:
         st.altair_chart(_build_revenue_oi_chart(items, x_labels), use_container_width=True)
 
-    partial_notes = [f"{it['year']}년: {it['partial']}" for it in items if it.get('partial')]
-    caption = (
-        f'출처: {source_note} · {fs_div or ""} · '
-        '매출액·영업이익(막대, 왼쪽 축) / 영업이익률(흰 선, 오른쪽 축)'
-    )
-    if partial_notes:
-        caption += ' · 부분 실적 ' + ', '.join(partial_notes)
-    st.caption(caption)
-
-    _render_growth_metrics(items, period_type)
-
-    # --- 아래: 주가 vs 연간 영업이익 (기간 단위 선택과 무관하게 항상 연도별) ---
-    # 부분 실적 연도(설립 첫해 등)는 12개월치가 아니라 추이·비교를 왜곡하므로
-    # 그래프에서는 제외하고, 정상 연도만으로 최근 7개년을 그린다.
-    full_years = [y for y in annual_years if not y.get('partial')]
-    if len(full_years) < 2:
-        st.info('정상 실적 연도가 2개 미만이라 추이 그래프를 그릴 수 없습니다.')
-        return
-    chart_years = full_years[-7:]
-    start_dt = pd.Timestamp(year=chart_years[0]['year'], month=1, day=1)
-
-    try:
-        with st.spinner('주가 데이터 불러오는 중...'):
-            price_df = fetch_stock_series(ticker, start_dt)
-        if price_df.empty:
-            st.warning('주가 데이터를 불러오지 못했습니다.')
-            return
-
-        price_line = price_df[['Close']].reset_index()
-        oi_df = pd.DataFrame([
-            {'Date': pd.Timestamp(year=y['year'], month=12, day=31), '영업이익': y['operating_income']}
-            for y in chart_years
-        ])
-
-        price_chart = (
-            alt.Chart(price_line)
-            .mark_line(color=NEUTRAL_CHART_COLOR)
-            .encode(
-                x=alt.X('Date:T', title=None),
-                y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
-                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
-            )
+        partial_notes = [f"{it['year']}년: {it['partial']}" for it in items if it.get('partial')]
+        caption = (
+            f'출처: {source_note} · {fs_div or ""} · '
+            '매출액·영업이익(막대, 왼쪽 축) / 영업이익률(흰 선, 오른쪽 축)'
         )
-        oi_chart = (
-            alt.Chart(oi_df)
-            .mark_line(color=SWISS_GREEN, point=True)
-            .encode(
-                x=alt.X('Date:T', title=None),
-                y=alt.Y('영업이익:Q', title='영업이익(억원)', scale=alt.Scale(zero=False)),
-                tooltip=[alt.Tooltip('Date:T', title='연도'), alt.Tooltip('영업이익:Q', format=',.1f')],
-            )
-        )
-        combo = (
-            alt.layer(price_chart, oi_chart)
-            .resolve_scale(y='independent')
-            .properties(height=320)
-            .interactive()
-        )
-        price_chart_col, _ = st.columns(2)
-        with price_chart_col:
-            st.altair_chart(combo, use_container_width=True)
-        st.caption(
-            f'{selected_name} 주가(흰색, 왼쪽 축)와 연간 영업이익(초록, 오른쪽 축 · 각 연말 시점에 표시) '
-            f'— {chart_years[0]["year"]}~{chart_years[-1]["year"]}년. 두 값의 단위가 달라(원 vs 억원) '
-            '지수화 대신 서로 다른 축으로 함께 표시했습니다.'
-        )
-    except Exception as e:
-        st.warning(f'그래프를 그리지 못했습니다: {e}')
+        if partial_notes:
+            caption += ' · 부분 실적 ' + ', '.join(partial_notes)
+        st.caption(caption)
+
+        _render_growth_metrics(items, period_type)
+
+    with col_right:
+        # 주가 vs 연간 영업이익 — 기간 단위 선택과 무관하게 항상 연도별.
+        # 부분 실적 연도(설립 첫해 등)는 12개월치가 아니라 추이·비교를 왜곡하므로
+        # 그래프에서는 제외하고, 정상 연도만으로 최근 7개년을 그린다.
+        full_years = [y for y in annual_years if not y.get('partial')]
+        if len(full_years) < 2:
+            st.info('정상 실적 연도가 2개 미만이라 추이 그래프를 그릴 수 없습니다.')
+        else:
+            chart_years = full_years[-7:]
+            start_dt = pd.Timestamp(year=chart_years[0]['year'], month=1, day=1)
+
+            try:
+                with st.spinner('주가 데이터 불러오는 중...'):
+                    price_df = fetch_stock_series(ticker, start_dt)
+                if price_df.empty:
+                    st.warning('주가 데이터를 불러오지 못했습니다.')
+                else:
+                    price_line = price_df[['Close']].reset_index()
+                    oi_df = pd.DataFrame([
+                        {'Date': pd.Timestamp(year=y['year'], month=12, day=31), '영업이익': y['operating_income']}
+                        for y in chart_years
+                    ])
+
+                    price_chart = (
+                        alt.Chart(price_line)
+                        .mark_line(color=NEUTRAL_CHART_COLOR)
+                        .encode(
+                            x=alt.X('Date:T', title=None),
+                            y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+                            tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
+                        )
+                    )
+                    oi_chart = (
+                        alt.Chart(oi_df)
+                        .mark_line(color=SWISS_GREEN, point=True)
+                        .encode(
+                            x=alt.X('Date:T', title=None),
+                            y=alt.Y('영업이익:Q', title='영업이익(억원)', scale=alt.Scale(zero=False)),
+                            tooltip=[alt.Tooltip('Date:T', title='연도'), alt.Tooltip('영업이익:Q', format=',.1f')],
+                        )
+                    )
+                    combo = (
+                        alt.layer(price_chart, oi_chart)
+                        .resolve_scale(y='independent')
+                        .properties(height=320)
+                        .interactive()
+                    )
+                    st.altair_chart(combo, use_container_width=True)
+                    st.caption(
+                        f'{selected_name} 주가(흰색, 왼쪽 축)와 연간 영업이익(초록, 오른쪽 축 · 각 연말 시점에 표시) '
+                        f'— {chart_years[0]["year"]}~{chart_years[-1]["year"]}년. 두 값의 단위가 달라(원 vs 억원) '
+                        '지수화 대신 서로 다른 축으로 함께 표시했습니다.'
+                    )
+            except Exception as e:
+                st.warning(f'그래프를 그리지 못했습니다: {e}')
 
 
 # 차트를 세로로 쌓지 않고 2열 그리드로 배치할 때 한 칸에 넣을 높이(px) — 가로 폭이
