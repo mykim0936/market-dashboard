@@ -177,41 +177,57 @@ def fetch_annual_financials(corp_code, bsns_years):
     return sorted(by_year.values(), key=lambda x: x['year']), fs_div_used
 
 
-# 분기보고서(11013)는 1분기 단독 실적을 그대로 주지만, 반기(11012)/3분기(11014)/
-# 사업보고서(11011)는 연초부터의 "누적" 실적이다. 그래서 각 분기 단독값은 누적치를
-# 뺄셈해서 만들어야 한다 — {report_code: 그 보고서가 커버하는 분기 번호(1~4)}.
+# {report_code: 그 보고서가 커버하는 분기 번호(1~4)}. 처음에는 반기(11012)/3분기
+# (11014)/사업보고서(11011)의 thstrm_amount가 전부 "연초부터의 누적"이라고 가정하고
+# 앞 분기 누적을 빼는 방식으로 짰었는데, 실제 DART 응답을 까보니 틀렸다:
+#
+#   - 1분기보고서(11013): thstrm_amount = 1분기 단독 (thstrm_add_amount와 동일)
+#   - 반기보고서(11012):   thstrm_amount = "2분기 단독"(3개월)!  thstrm_add_amount = 반기 누적(6개월)
+#   - 3분기보고서(11014):  thstrm_amount = "3분기 단독"(3개월)!  thstrm_add_amount = 9개월 누적
+#   - 사업보고서(11011):   thstrm_amount = 연간 누적(4분기 단독 아님), thstrm_add_amount 없음
+#
+# 즉 반기·3분기 보고서의 thstrm_amount는 이미 "그 분기 하나"의 실적이라 빼기가 필요
+# 없고(오히려 빼면 틀린다 — 이전 버전의 실제 버그였다), 4분기만 연간 누적에서 9개월
+# 누적(3분기보고서의 thstrm_add_amount)을 빼서 만들어야 한다. 여러 종목의 실제
+# 응답으로 이 패턴을 확인했다(아이쓰리시스템/쏠리드/엔켐, OFS·CFS 둘 다 동일).
 QUARTER_REPORT_CODES = {'11013': 1, '11012': 2, '11014': 3, '11011': 4}
 
 
+def _fetch_is_rows(corp_code, bsns_year, reprt_code):
+    """해당 보고서의 매출액/영업이익 손익계산서 행을 (rows, fs_div)로 반환 —
+    연결(CFS) 우선, 없으면 개별(OFS). 못 찾으면 (None, None)."""
+    for fs_div in ('CFS', 'OFS'):
+        candidate_rows = _get('fnlttSinglAcnt.json', {
+            'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': reprt_code,
+        })
+        if not candidate_rows:
+            continue
+        filtered = [
+            r for r in candidate_rows
+            if r.get('fs_div') == fs_div and r.get('sj_div') == 'IS'
+            and r.get('account_nm') in ('매출액', '영업이익')
+        ]
+        if filtered:
+            return filtered, fs_div
+    return None, None
+
+
 def fetch_quarterly_financials(corp_code, bsns_years):
-    """여러 bsns_year에 대해 분기별 매출액·영업이익(억원)을 계산한다 — 반기/3분기/
-    사업보고서의 누적치에서 앞 분기 누적치를 빼서 해당 분기만의 실적을 만든다.
-    아직 안 나온 분기(예: 3분기 보고서가 아직 없는 해)는 건너뛴다. 반환:
-    ((연도, 분기) 오름차순 리스트, 실제 쓰인 fs_div)."""
+    """여러 bsns_year에 대해 분기별 매출액·영업이익(억원)을 계산한다. 1~3분기는
+    각 보고서의 thstrm_amount를 그대로 쓰고(이미 단일 분기 값), 4분기만 사업보고서의
+    연간 누적에서 3분기보고서의 9개월 누적(thstrm_add_amount)을 빼서 만든다.
+    아직 안 나온 분기는 건너뛴다. 반환: ((연도, 분기) 오름차순 리스트, 실제 쓰인 fs_div)."""
     by_key = {}
     fs_div_used = None
 
     for bsns_year in bsns_years:
-        cumulative = {}
+        nine_month = {'revenue': None, 'operating_income': None}
+
         for reprt_code, qnum in QUARTER_REPORT_CODES.items():
-            rows = None
-            for fs_div in ('CFS', 'OFS'):
-                candidate_rows = _get('fnlttSinglAcnt.json', {
-                    'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': reprt_code,
-                })
-                if not candidate_rows:
-                    continue
-                filtered = [
-                    r for r in candidate_rows
-                    if r.get('fs_div') == fs_div and r.get('sj_div') == 'IS'
-                    and r.get('account_nm') in ('매출액', '영업이익')
-                ]
-                if filtered:
-                    rows = filtered
-                    fs_div_used = fs_div
-                    break
+            rows, fs_div = _fetch_is_rows(corp_code, bsns_year, reprt_code)
             if not rows:
                 continue
+            fs_div_used = fs_div
 
             revenue_row = next((r for r in rows if r.get('account_nm') == '매출액'), None)
             oi_row = next((r for r in rows if r.get('account_nm') == '영업이익'), None)
@@ -219,25 +235,31 @@ def fetch_quarterly_financials(corp_code, bsns_years):
             _, end = _parse_period(date_str)
             if end is None:
                 continue
-            revenue = _to_amount(revenue_row, 'thstrm_amount')
-            op_income = _to_amount(oi_row, 'thstrm_amount')
-            if revenue is None and op_income is None:
-                continue
-            cumulative[qnum] = (revenue, op_income)
 
-        prev_revenue, prev_op_income = 0.0, 0.0
-        for qnum in (1, 2, 3, 4):
-            if qnum not in cumulative:
+            if qnum == 4:
+                # 사업보고서 thstrm_amount는 연간 누적 — 3분기까지의 누적을 빼야
+                # 4분기 단독이 나온다. 3분기보고서를 못 받았으면 계산 불가.
+                fy_revenue = _to_amount(revenue_row, 'thstrm_amount')
+                fy_oi = _to_amount(oi_row, 'thstrm_amount')
+                q_revenue = (
+                    None if fy_revenue is None or nine_month['revenue'] is None
+                    else fy_revenue - nine_month['revenue']
+                )
+                q_op_income = (
+                    None if fy_oi is None or nine_month['operating_income'] is None
+                    else fy_oi - nine_month['operating_income']
+                )
+            else:
+                q_revenue = _to_amount(revenue_row, 'thstrm_amount')
+                q_op_income = _to_amount(oi_row, 'thstrm_amount')
+                if qnum == 3:
+                    nine_month['revenue'] = _to_amount(revenue_row, 'thstrm_add_amount')
+                    nine_month['operating_income'] = _to_amount(oi_row, 'thstrm_add_amount')
+
+            if q_revenue is None and q_op_income is None:
                 continue
-            revenue, op_income = cumulative[qnum]
-            q_revenue = None if revenue is None else revenue - prev_revenue
-            q_op_income = None if op_income is None else op_income - prev_op_income
             by_key[(bsns_year, qnum)] = {
                 'year': bsns_year, 'quarter': qnum, 'revenue': q_revenue, 'operating_income': q_op_income,
             }
-            if revenue is not None:
-                prev_revenue = revenue
-            if op_income is not None:
-                prev_op_income = op_income
 
     return sorted(by_key.values(), key=lambda x: (x['year'], x['quarter'])), fs_div_used

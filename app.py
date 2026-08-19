@@ -130,6 +130,7 @@ PORTFOLIO_CSV = os.path.join(DATA_DIR, 'portfolio_status.csv')
 # 스냅샷 — Streamlit Cloud에서 opendart.fss.or.kr/KRX 벌크 조회로의 접속이
 # 구조적으로 막혀 있어(2026-08 확인), 라이브 조회 대신 이 파일을 우선 쓴다.
 DART_SNAPSHOT_PATH = os.path.join(DATA_DIR, 'dart_snapshot.json')
+INVESTOR_FLOW_CSV = os.path.join(DATA_DIR, 'investor_flow.csv')
 NEWS_LIMIT = 15
 
 CASH_TICKER = 'CASH'
@@ -407,6 +408,32 @@ def get_indicators_df():
     return fetch_indicators_live()
 
 
+@st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
+def fetch_investor_flow_live():
+    """최근 20거래일 코스피 투자자별(기관/외국인/개인) 순매수 대금(원). collect.py의
+    collect_investor_flow()와 같은 조회를 그 자리에서 직접 한다."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=40)
+    df = pykrx_stock.get_market_trading_value_by_date(
+        start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), 'KOSPI')
+    return df.tail(20)
+
+
+def get_investor_flow_df():
+    if os.path.exists(INVESTOR_FLOW_CSV):
+        df = pd.read_csv(INVESTOR_FLOW_CSV, encoding='utf-8-sig')
+        df['날짜'] = pd.to_datetime(df['날짜'])
+        return df
+    try:
+        df = fetch_investor_flow_live()
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return df
+    df = df.reset_index().rename(columns={df.index.name or 'index': '날짜'})
+    return df
+
+
 def get_holdings_from_secrets():
     """클라우드 배포본용 — portfolio.csv(개인정보라 저장소에 커밋하지 않음) 대신
     Streamlit Secrets 의 [[portfolio]] 배열에서 보유 종목을 읽는다.
@@ -511,10 +538,13 @@ def fetch_dart_quarterly_financials_cached(ticker):
 
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
-    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·업종명을 한 번에 받아온다 — 종목별로
-    따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은 업종 종목들의 PER
-    중앙값) 계산에 쓴다. 티커를 인덱스로 하는 DataFrame(PER, 업종명)을 반환하고,
-    최근 며칠 안에 거래일 데이터가 없으면(휴장 등) 빈 DataFrame을 반환한다."""
+    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·PBR·배당수익률·업종명을 한 번에
+    받아온다 — 종목별로 따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은
+    업종 종목들의 PER 중앙값) 계산과 보유 종목의 PBR·배당수익률 표시에 함께 쓴다.
+    pykrx의 get_market_fundamental이 애초에 PER과 같은 호출에서 PBR·DIV(배당수익률)
+    까지 주므로 추가 호출 없이 컬럼만 더 뽑으면 된다. 티커를 인덱스로 하는
+    DataFrame(PER, PBR, DIV, 업종명)을 반환하고, 최근 며칠 안에 거래일 데이터가
+    없으면(휴장 등) 빈 DataFrame을 반환한다."""
     for delta in range(PER_LOOKBACK_DAYS):
         d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
         try:
@@ -523,25 +553,27 @@ def fetch_per_universe(market):
         except Exception:
             continue
         if not fundamentals.empty and not sectors.empty:
-            return fundamentals[['PER']].join(sectors[['업종명']], how='left')
-    return pd.DataFrame(columns=['PER', '업종명'])
+            return fundamentals[['PER', 'PBR', 'DIV']].join(sectors[['업종명']], how='left')
+    return pd.DataFrame(columns=['PER', 'PBR', 'DIV', '업종명'])
 
 
 def attach_per_columns(stocks):
-    """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
+    """보유 종목 각각에 자기 PER·PBR·배당수익률과 "업계 PER"를 붙인다.
     - 자기 PER: collect_dart.py가 만들어둔 로컬 스냅샷의 EPS가 있으면 그걸 오늘
       현재가와 결합해 계산한다(스냅샷 EPS는 분기/연 단위라 오래돼도 되지만, 가격은
       항상 최신을 쓴다). 스냅샷에 없으면 라이브 DART 조회, 그것도 안 되면 pykrx
       자체 PER 순으로 대체한다.
+    - PBR·배당수익률: DART 스냅샷에 대응 값이 없어서 항상 pykrx 시장 전체 데이터
+      (fetch_per_universe)에서 가져온다 — 어차피 업계 PER 계산에 쓰려고 받는
+      호출이라 추가 비용 없이 컬럼만 더 뽑는다.
     - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 PER 중앙값(적자로 PER이 의미
       없는 0 이하 값은 제외) — 스냅샷에 미리 계산돼 있으면 그걸 쓰고, 없으면 pykrx
-      시장 전체 데이터를 라이브로 받아 계산한다.
-    스냅샷과 라이브 조회 둘 다 실패하면 조용히 "-"(None)로 남긴다 — 표에서 이 함수
-    호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는
-    그대로 보여준다."""
+      시장 전체 데이터로 계산한다.
+    전부 실패하면 조용히 "-"(None)로 남긴다 — 표에서 이 함수 호출 자체가 실패해도
+    (pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는 그대로 보여준다."""
     stocks = stocks.copy()
     snapshot = load_dart_snapshot()
-    per_vals, industry_names, industry_pers = [], [], []
+    per_vals, industry_names, industry_pers, pbr_vals, div_vals = [], [], [], [], []
     universes = {}
 
     for _, row in stocks.iterrows():
@@ -559,26 +591,36 @@ def attach_per_columns(stocks):
                 # 계산까지 같이 죽지 않게 여기서 막는다.
                 eps = None
 
-        need_universe = eps is None or not snap or snap.get('industry_per') is None
+        # PBR·배당수익률은 스냅샷에 대응 항목이 없어 항상 pykrx가 필요하다.
         universe = None
-        if need_universe and market in ('KOSPI', 'KOSDAQ'):
+        if market in ('KOSPI', 'KOSDAQ'):
             if market not in universes:
                 universes[market] = fetch_per_universe(market)
             universe = universes[market]
+        has_row = universe is not None and not universe.empty and ticker in universe.index
 
         if eps is not None:
             stock_per = current_price / eps if eps > 0 and current_price else None
-        elif universe is not None and not universe.empty and ticker in universe.index:
+        elif has_row:
             raw_per = universe.loc[ticker, 'PER']
             stock_per = raw_per if raw_per and raw_per > 0 else None
         else:
             stock_per = None
         per_vals.append(stock_per)
 
+        if has_row:
+            raw_pbr = universe.loc[ticker, 'PBR']
+            pbr_vals.append(raw_pbr if raw_pbr and raw_pbr > 0 else None)
+            raw_div = universe.loc[ticker, 'DIV']
+            div_vals.append(raw_div if raw_div and raw_div > 0 else None)
+        else:
+            pbr_vals.append(None)
+            div_vals.append(None)
+
         if snap and snap.get('industry_per') is not None:
             industry_names.append(snap.get('industry_name'))
             industry_pers.append(snap.get('industry_per'))
-        elif universe is not None and not universe.empty and ticker in universe.index:
+        elif has_row:
             industry = universe.loc[ticker, '업종명']
             peers = universe[
                 (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
@@ -590,6 +632,8 @@ def attach_per_columns(stocks):
             industry_pers.append(None)
 
     stocks['per'] = per_vals
+    stocks['pbr'] = pbr_vals
+    stocks['div_yield'] = div_vals
     stocks['industry_name'] = industry_names
     stocks['industry_per'] = industry_pers
     return stocks
@@ -694,6 +738,52 @@ def render_macro_panel():
     st.caption(f"갱신 시각: {fetched_at} · 출처: ECOS / FRED")
 
 
+def render_investor_flow_panel():
+    """코스피 투자자별(외국인/기관/개인) 누적 순매수 — 최근 20거래일 순매수 대금을
+    날짜순으로 누적해서, "며칠째 사고 있는지/팔고 있는지"를 선 기울기로 바로 볼 수
+    있게 한다. 하루치 막대보다 누적선이 추세 판단에는 더 직접적이다."""
+    st.subheader('투자자별 수급 (코스피)')
+    df = get_investor_flow_df()
+    if df.empty:
+        st.info('투자자별 수급 데이터를 불러오지 못했습니다.')
+        return
+
+    chart_df = df[['날짜', '외국인합계', '기관합계', '개인']].copy()
+    for col in ('외국인합계', '기관합계', '개인'):
+        chart_df[col] = chart_df[col] / 1e8  # 원 -> 억원
+        chart_df[col] = chart_df[col].cumsum()
+
+    melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
+
+    chart = (
+        alt.Chart(melted)
+        .mark_line(point=True)
+        .encode(
+            x=alt.X('날짜:T', title=None),
+            y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
+            color=alt.Color(
+                '주체:N', title=None,
+                scale=alt.Scale(domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE]),
+            ),
+            tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
+        )
+        .properties(height=280)
+        .interactive()
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    last = df.iloc[-1]
+    cols = st.columns(3)
+    cols[0].metric('외국인 당일 순매수', f"{last['외국인합계'] / 1e8:+,.0f}억원")
+    cols[1].metric('기관 당일 순매수', f"{last['기관합계'] / 1e8:+,.0f}억원")
+    cols[2].metric('개인 당일 순매수', f"{last['개인'] / 1e8:+,.0f}억원")
+
+    st.caption(
+        file_caption(INVESTOR_FLOW_CSV, 'pykrx (KRX 투자자별 거래대금)')
+        + ' · 최근 20거래일 누적 · 코스피 전체 기준(개별 종목 수급 아님)'
+    )
+
+
 def style_portfolio(df):
     """손익 관련 컬럼만 상승 빨강 / 하락 파랑으로 칠한다."""
     signed_cols = ['전일대비(%)', '평가손익', '수익률(%)']
@@ -718,6 +808,8 @@ def style_portfolio(df):
             '비중(%)': '{:.1f}',
             'PER': '{:.2f}',
             '업계 PER': '{:.2f}',
+            'PBR': '{:.2f}',
+            '배당수익률(%)': '{:.2f}',
         }, na_rep='-')
     )
 
@@ -739,7 +831,7 @@ def render_portfolio_panel():
         stocks = attach_per_columns(stocks)
     except Exception:
         # PER 조회(pykrx)가 막혀도 나머지 보유 종목 표는 그대로 보여준다.
-        stocks = stocks.assign(per=None, industry_name=None, industry_per=None)
+        stocks = stocks.assign(per=None, pbr=None, div_yield=None, industry_name=None, industry_per=None)
 
     buy_total = stocks['buy_amount'].sum()
     eval_total = stocks['eval_amount'].sum()
@@ -771,11 +863,13 @@ def render_portfolio_panel():
         'profit_pct': '수익률(%)',
         'weight_pct': '비중(%)',
         'per': 'PER',
+        'pbr': 'PBR',
+        'div_yield': '배당수익률(%)',
         'industry_name': '업종',
         'industry_per': '업계 PER',
     })[['종목명', '시장', '현재가', '전일대비(%)', '수량', '평단가',
         '매입금액', '평가금액', '평가손익', '수익률(%)', '비중(%)',
-        'PER', '업종', '업계 PER']]
+        'PER', 'PBR', '배당수익률(%)', '업종', '업계 PER']]
 
     # 목록 조회가 429로 막혀 개별 조회로 받아오면 시장 구분이 비어 있다.
     table['시장'] = table['시장'].fillna('-').replace('', '-')
@@ -796,7 +890,8 @@ def render_portfolio_panel():
         'PER은 DART 전자공시(사업보고서) EPS 기준 직접 확인한 값에 오늘 현재가를 나눈 '
         '것이고(순손실 종목은 PER 산정 불가로 "-"), 업계 PER은 pykrx 기준 같은 시장'
         '(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값(적자 종목 제외)입니다. '
-        'ETF·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다.'
+        'PBR·배당수익률은 pykrx 공식 집계값입니다. ETF·시장 구분이 없는 종목은 '
+        '전부 "-"로 표시됩니다.'
     )
 
 
@@ -838,6 +933,49 @@ def _build_revenue_oi_chart(items, x_labels):
         )
     )
     return alt.layer(bars, line).resolve_scale(y='independent').properties(height=350)
+
+
+def _growth_pct(current, previous):
+    """전기 대비 증감률(%) — 전기가 0/None이거나 현재값이 None이면 계산 불가."""
+    if current is None or previous is None or previous == 0:
+        return None
+    return (current - previous) / abs(previous) * 100
+
+
+def _render_growth_metrics(items, period_type):
+    """최신 구간의 매출·영업이익 증감률을 카드로 보여준다. 연도별은 전년대비(YoY)만,
+    분기별은 전분기대비(QoQ)와 전년동기대비(YoY) 둘 다 — 분기 실적은 계절성이 커서
+    바로 전분기와 비교하면 오해하기 쉽고(예: 4분기가 항상 성수기인 업종), 같은 분기
+    끼리 비교하는 전년동기대비가 추세 판단에 더 흔히 쓰인다."""
+    if len(items) < 2:
+        return
+    latest = items[-1]
+
+    if period_type == '연도별':
+        prev = items[-2]
+        rows = [('매출액 YoY', _growth_pct(latest.get('revenue'), prev.get('revenue'))),
+                ('영업이익 YoY', _growth_pct(latest.get('operating_income'), prev.get('operating_income')))]
+    else:
+        qoq_prev = items[-2]
+        yoy_prev = next(
+            (it for it in items if it.get('year') == latest.get('year', 0) - 1
+             and it.get('quarter') == latest.get('quarter')),
+            None,
+        )
+        rows = [
+            ('매출액 QoQ', _growth_pct(latest.get('revenue'), qoq_prev.get('revenue'))),
+            ('매출액 YoY', _growth_pct(latest.get('revenue'), yoy_prev.get('revenue')) if yoy_prev else None),
+            ('영업이익 QoQ', _growth_pct(latest.get('operating_income'), qoq_prev.get('operating_income'))),
+            ('영업이익 YoY', _growth_pct(latest.get('operating_income'), yoy_prev.get('operating_income')) if yoy_prev else None),
+        ]
+
+    cols = st.columns(len(rows))
+    for col, (label, value) in zip(cols, rows):
+        col.metric(label, f'{value:+.1f}%' if value is not None else '-', delta_color='off')
+    st.caption(
+        '증감률은 위 차트와 같은 구간(최신 항목) 기준입니다. '
+        '분기별 QoQ는 계절성이 큰 업종에서는 왜곡될 수 있어 YoY와 함께 봅니다.'
+    )
 
 
 def render_stock_detail_panel():
@@ -919,12 +1057,9 @@ def render_stock_detail_panel():
     )
     if partial_notes:
         caption += ' · 부분 실적 ' + ', '.join(partial_notes)
-    if period_type == '분기별':
-        caption += (
-            ' · 분기 실적은 누적 보고서(반기/3분기/사업보고서)에서 앞 분기 누적치를 '
-            '뺀 값이라, 비교기간 재무 정정 등으로 드물게 음수가 나올 수 있습니다.'
-        )
     st.caption(caption)
+
+    _render_growth_metrics(items, period_type)
 
     # --- 아래: 주가 vs 연간 영업이익 (기간 단위 선택과 무관하게 항상 연도별) ---
     # 부분 실적 연도(설립 첫해 등)는 12개월치가 아니라 추이·비교를 왜곡하므로
@@ -1267,11 +1402,13 @@ def render_sidebar():
 
 
 def render_market_live():
-    """"전체 시장현황" 탭의 자동 새로고침 대상 — 지수 카드·거시 지표."""
+    """"전체 시장현황" 탭의 자동 새로고침 대상 — 지수 카드·거시 지표·투자자별 수급."""
     st.caption(f"화면 갱신 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     render_index_cards(MARKET_SERIES, '지수 현황')
     st.divider()
     render_macro_panel()
+    st.divider()
+    render_investor_flow_panel()
 
 
 def render_portfolio_live():
