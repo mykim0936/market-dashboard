@@ -538,13 +538,10 @@ def fetch_dart_quarterly_financials_cached(ticker):
 
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
-    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·PBR·배당수익률·업종명을 한 번에
-    받아온다 — 종목별로 따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은
-    업종 종목들의 PER 중앙값) 계산과 보유 종목의 PBR·배당수익률 표시에 함께 쓴다.
-    pykrx의 get_market_fundamental이 애초에 PER과 같은 호출에서 PBR·DIV(배당수익률)
-    까지 주므로 추가 호출 없이 컬럼만 더 뽑으면 된다. 티커를 인덱스로 하는
-    DataFrame(PER, PBR, DIV, 업종명)을 반환하고, 최근 며칠 안에 거래일 데이터가
-    없으면(휴장 등) 빈 DataFrame을 반환한다."""
+    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·업종명을 한 번에 받아온다 — 종목별로
+    따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은 업종 종목들의 PER
+    중앙값) 계산에 쓴다. 티커를 인덱스로 하는 DataFrame(PER, 업종명)을 반환하고,
+    최근 며칠 안에 거래일 데이터가 없으면(휴장 등) 빈 DataFrame을 반환한다."""
     for delta in range(PER_LOOKBACK_DAYS):
         d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
         try:
@@ -553,27 +550,25 @@ def fetch_per_universe(market):
         except Exception:
             continue
         if not fundamentals.empty and not sectors.empty:
-            return fundamentals[['PER', 'PBR', 'DIV']].join(sectors[['업종명']], how='left')
-    return pd.DataFrame(columns=['PER', 'PBR', 'DIV', '업종명'])
+            return fundamentals[['PER']].join(sectors[['업종명']], how='left')
+    return pd.DataFrame(columns=['PER', '업종명'])
 
 
 def attach_per_columns(stocks):
-    """보유 종목 각각에 자기 PER·PBR·배당수익률과 "업계 PER"를 붙인다.
+    """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
     - 자기 PER: collect_dart.py가 만들어둔 로컬 스냅샷의 EPS가 있으면 그걸 오늘
       현재가와 결합해 계산한다(스냅샷 EPS는 분기/연 단위라 오래돼도 되지만, 가격은
       항상 최신을 쓴다). 스냅샷에 없으면 라이브 DART 조회, 그것도 안 되면 pykrx
       자체 PER 순으로 대체한다.
-    - PBR·배당수익률: DART 스냅샷에 대응 값이 없어서 항상 pykrx 시장 전체 데이터
-      (fetch_per_universe)에서 가져온다 — 어차피 업계 PER 계산에 쓰려고 받는
-      호출이라 추가 비용 없이 컬럼만 더 뽑는다.
     - 업계 PER: 같은 시장·같은 업종 내 다른 종목들의 PER 중앙값(적자로 PER이 의미
       없는 0 이하 값은 제외) — 스냅샷에 미리 계산돼 있으면 그걸 쓰고, 없으면 pykrx
-      시장 전체 데이터로 계산한다.
-    전부 실패하면 조용히 "-"(None)로 남긴다 — 표에서 이 함수 호출 자체가 실패해도
-    (pykrx 장애 등) 호출부에서 try/except로 감싸 나머지 표는 그대로 보여준다."""
+      시장 전체 데이터를 라이브로 받아 계산한다.
+    ETF·상장 정보가 없는 종목·시장 구분이 없는 종목은 조용히 "-"(None)로 남긴다 —
+    표에서 이 함수 호출 자체가 실패해도(pykrx 장애 등) 호출부에서 try/except로
+    감싸 나머지 표는 그대로 보여준다."""
     stocks = stocks.copy()
     snapshot = load_dart_snapshot()
-    per_vals, industry_names, industry_pers, pbr_vals, div_vals = [], [], [], [], []
+    per_vals, industry_names, industry_pers = [], [], []
     universes = {}
 
     for _, row in stocks.iterrows():
@@ -591,36 +586,26 @@ def attach_per_columns(stocks):
                 # 계산까지 같이 죽지 않게 여기서 막는다.
                 eps = None
 
-        # PBR·배당수익률은 스냅샷에 대응 항목이 없어 항상 pykrx가 필요하다.
+        need_universe = eps is None or not snap or snap.get('industry_per') is None
         universe = None
-        if market in ('KOSPI', 'KOSDAQ'):
+        if need_universe and market in ('KOSPI', 'KOSDAQ'):
             if market not in universes:
                 universes[market] = fetch_per_universe(market)
             universe = universes[market]
-        has_row = universe is not None and not universe.empty and ticker in universe.index
 
         if eps is not None:
             stock_per = current_price / eps if eps > 0 and current_price else None
-        elif has_row:
+        elif universe is not None and not universe.empty and ticker in universe.index:
             raw_per = universe.loc[ticker, 'PER']
             stock_per = raw_per if raw_per and raw_per > 0 else None
         else:
             stock_per = None
         per_vals.append(stock_per)
 
-        if has_row:
-            raw_pbr = universe.loc[ticker, 'PBR']
-            pbr_vals.append(raw_pbr if raw_pbr and raw_pbr > 0 else None)
-            raw_div = universe.loc[ticker, 'DIV']
-            div_vals.append(raw_div if raw_div and raw_div > 0 else None)
-        else:
-            pbr_vals.append(None)
-            div_vals.append(None)
-
         if snap and snap.get('industry_per') is not None:
             industry_names.append(snap.get('industry_name'))
             industry_pers.append(snap.get('industry_per'))
-        elif has_row:
+        elif universe is not None and not universe.empty and ticker in universe.index:
             industry = universe.loc[ticker, '업종명']
             peers = universe[
                 (universe['업종명'] == industry) & (universe.index != ticker) & (universe['PER'] > 0)
@@ -632,8 +617,6 @@ def attach_per_columns(stocks):
             industry_pers.append(None)
 
     stocks['per'] = per_vals
-    stocks['pbr'] = pbr_vals
-    stocks['div_yield'] = div_vals
     stocks['industry_name'] = industry_names
     stocks['industry_per'] = industry_pers
     return stocks
@@ -808,8 +791,6 @@ def style_portfolio(df):
             '비중(%)': '{:.1f}',
             'PER': '{:.2f}',
             '업계 PER': '{:.2f}',
-            'PBR': '{:.2f}',
-            '배당수익률(%)': '{:.2f}',
         }, na_rep='-')
     )
 
@@ -831,7 +812,7 @@ def render_portfolio_panel():
         stocks = attach_per_columns(stocks)
     except Exception:
         # PER 조회(pykrx)가 막혀도 나머지 보유 종목 표는 그대로 보여준다.
-        stocks = stocks.assign(per=None, pbr=None, div_yield=None, industry_name=None, industry_per=None)
+        stocks = stocks.assign(per=None, industry_name=None, industry_per=None)
 
     buy_total = stocks['buy_amount'].sum()
     eval_total = stocks['eval_amount'].sum()
@@ -863,13 +844,11 @@ def render_portfolio_panel():
         'profit_pct': '수익률(%)',
         'weight_pct': '비중(%)',
         'per': 'PER',
-        'pbr': 'PBR',
-        'div_yield': '배당수익률(%)',
         'industry_name': '업종',
         'industry_per': '업계 PER',
     })[['종목명', '시장', '현재가', '전일대비(%)', '수량', '평단가',
         '매입금액', '평가금액', '평가손익', '수익률(%)', '비중(%)',
-        'PER', 'PBR', '배당수익률(%)', '업종', '업계 PER']]
+        'PER', '업종', '업계 PER']]
 
     # 목록 조회가 429로 막혀 개별 조회로 받아오면 시장 구분이 비어 있다.
     table['시장'] = table['시장'].fillna('-').replace('', '-')
@@ -890,8 +869,7 @@ def render_portfolio_panel():
         'PER은 DART 전자공시(사업보고서) EPS 기준 직접 확인한 값에 오늘 현재가를 나눈 '
         '것이고(순손실 종목은 PER 산정 불가로 "-"), 업계 PER은 pykrx 기준 같은 시장'
         '(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값(적자 종목 제외)입니다. '
-        'PBR·배당수익률은 pykrx 공식 집계값입니다. ETF·시장 구분이 없는 종목은 '
-        '전부 "-"로 표시됩니다.'
+        'ETF·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다.'
     )
 
 
@@ -1048,7 +1026,9 @@ def render_stock_detail_panel():
         st.info(f'{selected_name}의 {period_type} 재무 데이터를 찾지 못했습니다.')
         return
 
-    st.altair_chart(_build_revenue_oi_chart(items, x_labels), use_container_width=True)
+    chart_col, _ = st.columns(2)
+    with chart_col:
+        st.altair_chart(_build_revenue_oi_chart(items, x_labels), use_container_width=True)
 
     partial_notes = [f"{it['year']}년: {it['partial']}" for it in items if it.get('partial')]
     caption = (
@@ -1108,7 +1088,9 @@ def render_stock_detail_panel():
             .properties(height=320)
             .interactive()
         )
-        st.altair_chart(combo, use_container_width=True)
+        price_chart_col, _ = st.columns(2)
+        with price_chart_col:
+            st.altair_chart(combo, use_container_width=True)
         st.caption(
             f'{selected_name} 주가(흰색, 왼쪽 축)와 연간 영업이익(초록, 오른쪽 축 · 각 연말 시점에 표시) '
             f'— {chart_years[0]["year"]}~{chart_years[-1]["year"]}년. 두 값의 단위가 달라(원 vs 억원) '
