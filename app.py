@@ -173,24 +173,32 @@ def inject_theme_css():
         color: {SWISS_WHITE};
     }}
 
-    /* 스위스 스타일 헤드라인: 굵게, 자간 좁게, 그리드 규칙선으로 구획 */
+    /* 스위스 스타일 헤드라인: 굵게, 자간 좁게, 그리드 규칙선으로 구획.
+    본문(13px)과 확실히 구분되도록 단계별로 크기 차이를 벌려둔다 — 이전에는 h3가
+    1.05rem(≈13.7px)이라 본문과 거의 같아서 구획 제목 구실을 못 했다. */
     h1, h2, h3 {{
         font-weight: 700 !important;
         letter-spacing: -0.02em;
         color: {SWISS_WHITE} !important;
     }}
     h1 {{
-        font-size: 1.6rem !important;
+        font-size: 1.7rem !important;
         border-bottom: 3px solid {SWISS_WHITE};
         padding-bottom: 0.5rem;
     }}
     h2 {{
-        font-size: 1.25rem !important;
+        font-size: 1.45rem !important;
         border-bottom: 2px solid {SWISS_WHITE};
         padding-bottom: 0.3rem;
     }}
+    /* 각 패널 제목(st.subheader) — 초록 세로 규칙선을 붙여 스크롤 중에도 "여기서
+    새 구획이 시작된다"가 한눈에 잡히게 한다. */
     h3 {{
-        font-size: 1.05rem !important;
+        font-size: 1.3rem !important;
+        margin-top: 1.6rem !important;
+        padding-left: 0.55rem;
+        border-left: 3px solid {SWISS_GREEN};
+        line-height: 1.35;
     }}
 
     hr {{
@@ -212,16 +220,25 @@ def inject_theme_css():
         border: 1px solid {SWISS_GRAY_LIGHT};
         padding: 0.75rem 1rem;
     }}
+    /* 카드 라벨은 이전에 0.7rem(≈9px) + uppercase + 자간 확대였는데, 한글은 대문자
+    개념이 없어 uppercase가 무의미하고 9px에 자간까지 벌리면 오히려 읽기 나빠진다.
+    크기를 키우고 자간을 정상으로 되돌린다. */
     [data-testid="stMetricLabel"] {{
         color: {SWISS_GRAY};
-        text-transform: uppercase;
-        font-size: 0.7rem;
-        letter-spacing: 0.05em;
+        font-size: 0.92rem !important;
+        letter-spacing: normal;
+        font-weight: 600;
+    }}
+    [data-testid="stMetricLabel"] p {{
+        font-size: 0.92rem !important;
     }}
     [data-testid="stMetricValue"] {{
         color: {SWISS_WHITE};
         font-weight: 700;
-        font-size: 1.4rem !important;
+        font-size: 1.5rem !important;
+    }}
+    [data-testid="stMetricDelta"] {{
+        font-size: 0.95rem !important;
     }}
 
     /* 탭 강조색(선택된 탭 글자/밑줄)도 config.toml의 primaryColor(초록)를 그대로 쓴다. */
@@ -257,8 +274,31 @@ def inject_theme_css():
         border-right: 1px solid {SWISS_GRAY};
     }}
 
+    /* 출처·갱신시각 캡션 — 보조 정보라 회색이지만, 기본 0.875rem(≈11px)은 한글에서
+    너무 작아 살짝 키우고 줄간격을 벌려 두세 줄짜리 캡션도 읽히게 한다. */
     [data-testid="stCaptionContainer"], .stCaption {{
         color: {SWISS_GRAY} !important;
+        font-size: 0.92rem !important;
+        line-height: 1.6 !important;
+    }}
+    [data-testid="stCaptionContainer"] p {{
+        font-size: 0.92rem !important;
+    }}
+
+    /* 표(glide-data-grid)는 캔버스로 그려져서 일반 CSS font-size가 안 먹고, 아래
+    커스텀 속성만 반영된다. 인라인으로 박혀 있어 !important 로 덮어써야 이긴다. */
+    .stDataFrameGlideDataEditor {{
+        --gdg-base-font-style: 500 12.5px !important;
+        --gdg-header-font-style: 600 12.5px !important;
+        --gdg-cell-vertical-padding: 6px !important;
+    }}
+
+    /* 라디오(기간 선택 등) 항목이 너무 붙어 있어 잘못 누르기 쉬웠던 부분 완화 */
+    [data-testid="stRadio"] label {{
+        font-size: 0.95rem !important;
+    }}
+    [role="radiogroup"] {{
+        gap: 0.35rem;
     }}
     </style>
     """, unsafe_allow_html=True)
