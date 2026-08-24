@@ -327,3 +327,25 @@ def fetch_operating_cashflow(corp_code, bsns_year):
         if by_year:
             return sorted(({'year': y, 'cfo': v} for y, v in by_year.items()), key=lambda x: x['year'])
     return []
+
+
+def fetch_disclosures(corp_code, bgn_de, end_de, page_count=100):
+    """최근 공시 목록(제목/일자/제출인)을 가져온다(공시검색 API, list.json).
+    최대 page_count건까지 한 페이지로 받는다 — 6개월치는 보통 이 안에 다 들어온다.
+    반환: [{'report_nm':, 'rcept_dt':, 'flr_nm':, 'rcept_no':}] (DART가 주는 최신순
+    그대로) — 그 기간에 공시가 없거나 조회 실패 시 []."""
+    rows = _get('list.json', {
+        'corp_code': corp_code, 'bgn_de': bgn_de, 'end_de': end_de,
+        'page_no': 1, 'page_count': page_count,
+    })
+    if not rows:
+        return []
+    return [
+        {
+            'report_nm': (r.get('report_nm') or '').strip(),
+            'rcept_dt': r.get('rcept_dt'),
+            'flr_nm': r.get('flr_nm'),
+            'rcept_no': r.get('rcept_no'),
+        }
+        for r in rows
+    ]

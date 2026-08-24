@@ -561,6 +561,63 @@ def fetch_dart_cashflow_cached(ticker):
     return []
 
 
+# 강조 배지를 붙일 공시 유형 — 증자/사채/최대주주 변경/합병·분할 등 희석·지배구조
+# 관련 이벤트. report_nm에 이 문자열이 하나라도 들어있으면 🔴로 강조한다.
+DISCLOSURE_HIGHLIGHT_KEYWORDS = (
+    '유상증자', '무상증자', '전환사채', '신주인수권부사채', '교환사채',
+    '최대주주', '단일판매', '공급계약', '회사분할', '회사합병', '감자',
+    '자기주식취득', '자기주식처분',
+)
+DISCLOSURE_LOOKBACK_DAYS = 180  # 최근 6개월
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_disclosures_cached(ticker):
+    """정량 스코어카드의 공시 이벤트 타임라인용 — 최근 6개월 공시 목록."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return []
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=DISCLOSURE_LOOKBACK_DAYS)
+    return fetch_dart.fetch_disclosures(corp_code, start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'))
+
+
+# 표시는 최근 60거래일이지만 주말·공휴일을 감안해 넉넉히 받아온 뒤 뒤에서 자른다.
+INVESTOR_FLOW_LOOKBACK_DAYS = 90
+STOCK_INVESTOR_FLOW_DAYS = 60
+
+
+@st.cache_data(ttl=PER_TTL_SEC)
+def fetch_stock_investor_flow(ticker):
+    """정량 스코어카드용 — 개별 종목의 최근 60거래일 투자자별(외국인/기관/개인)
+    순매수 대금(원)을 pykrx에서 직접 받는다. 기존 "투자자별 수급" 패널은 코스피
+    시장 전체 기준이라, 이건 그 함수를 종목 티커로 그대로 호출하는 별개 경로다.
+    실패하거나 자료가 없으면 빈 DataFrame."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=INVESTOR_FLOW_LOOKBACK_DAYS)
+    try:
+        df = pykrx_stock.get_market_trading_value_by_date(
+            start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), ticker,
+        )
+    except Exception:
+        return pd.DataFrame()
+    return df.tail(STOCK_INVESTOR_FLOW_DAYS)
+
+
+@st.cache_data(ttl=PER_TTL_SEC)
+def fetch_stock_shorting(ticker):
+    """정량 스코어카드용 — 개별 종목의 최근 공매도 잔고 비중(%) 추이(pykrx)."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=INVESTOR_FLOW_LOOKBACK_DAYS)
+    try:
+        df = pykrx_stock.get_shorting_balance_by_date(
+            start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), ticker,
+        )
+    except Exception:
+        return pd.DataFrame()
+    return df.tail(STOCK_INVESTOR_FLOW_DAYS)
+
+
 @st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_quarterly_financials_cached(ticker):
     """종목 상세 패널의 분기별 보기용 — 최근 최대 8개 분기 매출액·영업이익(억원)을
@@ -1751,6 +1808,68 @@ def render_quant_scorecard():
                 '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
             )
         st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
+
+    st.divider()
+    st.markdown('##### 수급 · 공시')
+    try:
+        flow_df = fetch_stock_investor_flow(ticker)
+    except Exception:
+        flow_df = pd.DataFrame()
+    if not flow_df.empty and {'외국인합계', '기관합계', '개인'}.issubset(flow_df.columns):
+        chart_df = flow_df[['외국인합계', '기관합계', '개인']].div(1e8).cumsum().reset_index()
+        chart_df.columns = ['날짜', '외국인합계', '기관합계', '개인']
+        melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
+        flow_chart = (
+            alt.Chart(melted)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X('날짜:T', title=None),
+                y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
+                color=alt.Color(
+                    '주체:N', title=None,
+                    scale=alt.Scale(domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE]),
+                ),
+                tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
+            )
+            .properties(height=260)
+            .interactive()
+        )
+        st.altair_chart(flow_chart, use_container_width=True)
+        st.caption(f'{name} 개별 종목 기준 최근 {len(flow_df)}거래일 누적 순매수 · 출처: pykrx (KRX 투자자별 거래대금)')
+    else:
+        st.info('종목별 수급 데이터를 불러오지 못했습니다.')
+
+    try:
+        short_df = fetch_stock_shorting(ticker)
+    except Exception:
+        short_df = pd.DataFrame()
+    if not short_df.empty and '비중' in short_df.columns:
+        latest_date = short_df.index[-1]
+        latest_date_str = latest_date.strftime('%Y-%m-%d') if hasattr(latest_date, 'strftime') else str(latest_date)
+        st.metric('공매도 비중(최신)', f"{short_df['비중'].iloc[-1]:.2f}%")
+        st.caption(f'{latest_date_str} 기준 · 상장주식수 대비 공매도 잔고 비중 · 출처: pykrx (공매도 잔고 현황)')
+
+    st.markdown('###### 최근 공시 (6개월)')
+    try:
+        disclosures = fetch_dart_disclosures_cached(ticker)
+    except Exception:
+        disclosures = []
+    if not disclosures:
+        st.caption('최근 6개월 내 공시 내역을 찾지 못했습니다.')
+    else:
+        lines = []
+        for d in disclosures[:30]:
+            date_str = d.get('rcept_dt') or ''
+            date_fmt = f'{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}' if len(date_str) == 8 else date_str
+            report_nm = d.get('report_nm', '')
+            highlighted = any(kw in report_nm for kw in DISCLOSURE_HIGHLIGHT_KEYWORDS)
+            prefix = '🔴' if highlighted else '•'
+            lines.append(f'{prefix} `{date_fmt}` {report_nm}')
+        st.markdown('\n'.join(lines))
+        st.caption(
+            f'최근 {len(disclosures)}건 중 최신 30건 표시 · 🔴 = 증자·전환사채·최대주주변경·합병분할 등 주요 이벤트 · '
+            '출처: DART 공시검색, 하루 캐시.'
+        )
 
     if len(annual_years) >= 2:
         st.divider()
