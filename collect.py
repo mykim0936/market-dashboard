@@ -204,7 +204,15 @@ PIPELINE_STEPS = [
 def load_status():
     if os.path.exists(STATUS_JSON):
         with open(STATUS_JSON, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            raw = f.read().strip()
+        if not raw:
+            # 빈 파일(쓰다가 중단된 경우 등)이면 새로 시작 — 여기서 예외가 나면
+            # run_pipeline() 전체가 죽어서 이후 모든 수집 단계가 통째로 건너뛰어진다.
+            return {}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
     return {}
 
 

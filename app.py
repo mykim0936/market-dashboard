@@ -125,6 +125,10 @@ DOWN_COLOR = '#1565C0'
 
 INDICATORS_CSV = os.path.join(DATA_DIR, 'indicators.csv')
 NEWS_CSV = os.path.join(DATA_DIR, 'news.csv')
+# 패널 제목이 "24시간 이내"라고 못 박아 두는데, 로컬 캐시 파일이 있으면 나이를
+# 따지지 않고 무조건 믿어버리면(스케줄러가 멈췄을 때) 며칠 지난 뉴스를 "24시간
+# 이내"로 잘못 표시하게 된다. 캐시가 이보다 오래됐으면 라이브 조회로 대체한다.
+NEWS_STALE_THRESHOLD_SEC = 6 * 60 * 60
 PORTFOLIO_CSV = os.path.join(DATA_DIR, 'portfolio_status.csv')
 # collect_dart.py가 로컬(주기적 스케줄러)에서 만들어 git에 커밋해두는 PER/재무
 # 스냅샷 — Streamlit Cloud에서 opendart.fss.or.kr/KRX 벌크 조회로의 접속이
@@ -727,8 +731,19 @@ def fetch_news_live():
     return df
 
 
+def _news_cache_is_fresh():
+    if not os.path.exists(NEWS_CSV):
+        return False
+    age_sec = datetime.now().timestamp() - os.path.getmtime(NEWS_CSV)
+    return age_sec <= NEWS_STALE_THRESHOLD_SEC
+
+
 def get_news_df():
-    if os.path.exists(NEWS_CSV):
+    """로컬 캐시가 있어도 너무 오래됐으면(스케줄러가 멈춘 경우 등) 쓰지 않는다 —
+    패널이 "24시간 이내"라고 표시하는데 실제로는 며칠 지난 뉴스를 보여주는 걸
+    막기 위해서다. render_news_panel()의 캡션도 이 판단과 같은 기준을 써야
+    "갱신 시각"이 실제로 보여준 데이터와 어긋나지 않는다."""
+    if _news_cache_is_fresh():
         df = load_csv(NEWS_CSV)
         if not df.empty:
             df['published_at'] = pd.to_datetime(df['published_at'], utc=True)
@@ -1578,7 +1593,13 @@ def render_news_panel():
     with tab_us:
         render_news_list(overseas)
 
-    st.caption(file_caption(NEWS_CSV, 'RSS 피드 (fetch_news.py)'))
+    if _news_cache_is_fresh():
+        st.caption(file_caption(NEWS_CSV, 'RSS 피드 (fetch_news.py)'))
+    else:
+        st.caption(
+            f'갱신 시각: 방금 (라이브 조회 — 로컬 캐시가 {NEWS_STALE_THRESHOLD_SEC // 3600}시간 '
+            '넘게 오래돼 대체함) · 출처: RSS 피드 (fetch_news.py)'
+        )
 
 
 # --- 갱신 제어 -----------------------------------------------------------
