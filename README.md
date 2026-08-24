@@ -80,13 +80,11 @@ python -m streamlit run app.py
    홈 화면에 아이콘으로 추가해두면 앱처럼 쓸 수 있다(iOS: 공유 → 홈 화면에 추가 /
    Android: 브라우저 메뉴 → 홈 화면에 추가).
 
-**종목 분석 탭**: 종목명을 입력하면 웹 서치 도구를 켠 **OpenAI Responses API**를 직접
-호출해 월스트리트 시니어 애널리스트 프레임워크(Narrative → Reverse DCF → DCF → Comps →
-민감도 → So What) 리포트를 생성한다(`OPENAI_API_KEY`를 Secrets에 설정했을 때만 —
-[platform.openai.com](https://platform.openai.com)에서 발급). 검색을 여러 번 쓰는 유료
-호출이라 같은 종목명은 6시간 캐시된다(`app.py`의 `STOCK_OPINION_TTL_SEC`). 키를 설정하지
-않으면 이 탭만 "설정 필요" 안내가 뜨고 나머지 탭(지수/거시/보유종목/뉴스/RS 비교)은 그대로
-정상 동작한다.
+**종목 분석 탭**: 정량 스코어카드 — API 키 없이 코스피·코스닥 전 종목을 검색해, 이 대시보드가
+이미 계산 중인 지표(PER/업계PER·리스크 지표·이동평균·DART 재무 안정성·성장률·수급·공시)를
+규칙으로 조합한 6축 판정을 즉시 보여준다. 예전에는 이 자리에 OpenAI Responses API로 리포트를
+생성하는 모드도 있었으나(`stock_opinion.py`), API 키 없이는 계속 "설정 필요" 안내만 뜨는
+채로 남아 있어 완전히 제거했다.
 
 **보유 종목 PER·종목 상세**: 포트폴리오 탭의 PER(EPS 기준)과 "종목 상세" 패널(연간
 매출액/영업이익/영업이익률 + 주가·영업이익 추이 그래프)은 **DART Open API**를 직접
@@ -104,8 +102,7 @@ PER은 pykrx 자체 PER로 자동 대체되고, "종목 상세" 패널만 "설�
 | `fetch_portfolio.py` | `portfolio.csv` 기준 보유 종목 시세·평가손익 계산 |
 | `fetch_indicators.py` | ECOS(기준금리·환율) / FRED(미 10년물·달러인덱스) |
 | `fetch_news.py` | 국내외 RSS 10종에서 24시간 이내 기사 수집 |
-| `fetch_dart.py` | DART Open API — 보유 종목 EPS·연간 매출액/영업이익 실시간 조회 |
-| `stock_opinion.py` | "종목 분석" 탭 — OpenAI Responses API(웹 검색 포함)로 투자의견 리포트 생성 |
+| `fetch_dart.py` | DART Open API — EPS·재무제표·재무지표·증자현황·최대주주·공시검색 조회 |
 | `make_briefing.py` | 지표·뉴스 기반 브리핑 텍스트 생성 (로컬 파이프라인 전용 — 대시보드 UI에는 더 이상 표시 안 함) |
 | `validate.py` | 수집 데이터 교차 검증 |
 | `requirements.txt` | Streamlit Cloud 배포용 의존성 목록 |
