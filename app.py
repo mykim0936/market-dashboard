@@ -533,6 +533,35 @@ def fetch_dart_financials_cached(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_financial_ratios_cached(ticker):
+    """정량 스코어카드의 재무 안정성·수익성 카드용 — 부채비율/유동비율/이자보상배율/
+    ROE/순이익률. 올해 사업보고서가 아직 안 나왔을 수 있어 최근 연도부터 2개까지 시도."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return {}
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        ratios = fetch_dart.fetch_financial_ratios(corp_code, str(bsns_year))
+        if ratios:
+            return ratios
+    return {}
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_cashflow_cached(ticker):
+    """정량 스코어카드의 "이익의 질" 카드용 — 최근 3개년 영업활동현금흐름(억원)."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return []
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        cfo = fetch_dart.fetch_operating_cashflow(corp_code, str(bsns_year))
+        if cfo:
+            return cfo
+    return []
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_quarterly_financials_cached(ticker):
     """종목 상세 패널의 분기별 보기용 — 최근 최대 8개 분기 매출액·영업이익(억원)을
     구한다. 반환: (분기 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
@@ -546,10 +575,12 @@ def fetch_dart_quarterly_financials_cached(ticker):
 
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
-    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·업종명을 한 번에 받아온다 — 종목별로
+    """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·PBR·업종명을 한 번에 받아온다 — 종목별로
     따로 부르지 않고 시장 전체를 한 번에 받아 "업계 PER"(같은 업종 종목들의 PER
-    중앙값) 계산에 쓴다. 티커를 인덱스로 하는 DataFrame(PER, 업종명)을 반환하고,
-    최근 며칠 안에 거래일 데이터가 없으면(휴장 등) 빈 DataFrame을 반환한다."""
+    중앙값) 계산과 정량 스코어카드의 PBR 조회에 함께 쓴다(PBR은 A3에서 제거했던
+    보유종목 표에는 다시 노출하지 않고, 정량 스코어카드에서만 이 함수를 직접 불러
+    쓴다). 티커를 인덱스로 하는 DataFrame(PER, PBR, 업종명)을 반환하고, 최근 며칠
+    안에 거래일 데이터가 없으면(휴장 등) 빈 DataFrame을 반환한다."""
     for delta in range(PER_LOOKBACK_DAYS):
         d = (datetime.now() - pd.Timedelta(days=delta)).strftime('%Y%m%d')
         try:
@@ -558,8 +589,8 @@ def fetch_per_universe(market):
         except Exception:
             continue
         if not fundamentals.empty and not sectors.empty:
-            return fundamentals[['PER']].join(sectors[['업종명']], how='left')
-    return pd.DataFrame(columns=['PER', '업종명'])
+            return fundamentals[['PER', 'PBR']].join(sectors[['업종명']], how='left')
+    return pd.DataFrame(columns=['PER', 'PBR', '업종명'])
 
 
 @st.cache_data(ttl=24 * 60 * 60)
@@ -1615,6 +1646,33 @@ def render_quant_scorecard():
         revenue_yoy = _growth_pct(latest.get('revenue'), prev.get('revenue'))
         oi_yoy = _growth_pct(latest.get('operating_income'), prev.get('operating_income'))
 
+    pbr = None
+    if market in ('KOSPI', 'KOSDAQ'):
+        try:
+            universe = fetch_per_universe(market)
+            if not universe.empty and ticker in universe.index:
+                raw_pbr = universe.loc[ticker, 'PBR']
+                pbr = raw_pbr if raw_pbr and raw_pbr > 0 else None
+        except Exception:
+            pbr = None
+
+    try:
+        ratios = fetch_dart_financial_ratios_cached(ticker)
+    except Exception:
+        ratios = {}
+    debt_ratio = ratios.get('debt_ratio')
+    current_ratio = ratios.get('current_ratio')
+    interest_coverage = ratios.get('interest_coverage')
+    roe = ratios.get('roe')
+    net_margin = ratios.get('net_margin')
+    psr = per * net_margin / 100 if per is not None and net_margin is not None and net_margin > 0 else None
+    peg = per / oi_yoy if per is not None and oi_yoy is not None and oi_yoy > 0 else None
+
+    try:
+        cfo_list = fetch_dart_cashflow_cached(ticker)
+    except Exception:
+        cfo_list = []
+
     val_score, val_text = _valuation_signal(per, industry_per)
     pos_score, pos_text = _position_signal(pos_52w)
     trend_score, trend_text = _trend_signal(gaps.get(20), gaps.get(60))
@@ -1648,6 +1706,51 @@ def render_quant_scorecard():
         '4개 지표(밸류에이션·위치·추세·성장성)를 단순 규칙으로 조합한 점수이며 투자 조언이 아닙니다. '
         '출처: pykrx/FinanceDataReader/DART (각 지표는 이 대시보드의 기존 캐시 주기를 그대로 따름).'
     )
+
+    st.divider()
+    st.markdown('##### 재무 안정성 · 밸류에이션 보강')
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric('부채비율', f'{debt_ratio:.0f}%' if debt_ratio is not None else '-')
+    d2.metric('유동비율', f'{current_ratio:.0f}%' if current_ratio is not None else '-')
+    d3.metric(
+        '이자보상배율', f'{interest_coverage:.1f}배' if interest_coverage is not None else '-',
+        delta='위험' if interest_coverage is not None and interest_coverage < 1 else None,
+        delta_color='inverse',
+    )
+    d4.metric('ROE', f'{roe:.1f}%' if roe is not None else '-')
+    d5, d6, d7 = st.columns(3)
+    d5.metric('PBR', f'{pbr:.2f}배' if pbr is not None else '-')
+    d6.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
+    d7.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
+    st.caption(
+        '부채비율·유동비율·이자보상배율·ROE는 DART 사업보고서 재무지표(하루 캐시) · '
+        'PBR은 pykrx 시장 전체 조회(10분 캐시) · PSR=PER×순이익률, PEG=PER÷영업이익 YoY(둘 다 이 페이지에서 계산). '
+        '이자보상배율이 1 미만이면 영업이익으로 이자비용도 못 감당한다는 뜻입니다. '
+        '값이 없는 항목은 DART가 해당 종목·연도에 대해 그 지표를 계산해 공시하지 않은 경우입니다.'
+    )
+
+    if len(cfo_list) >= 1:
+        st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 3개년)')
+        oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
+        rows = []
+        for item in cfo_list:
+            year = item['year']
+            oi = oi_by_year.get(year)
+            rows.append({
+                '연도': year, '영업활동현금흐름(억원)': item['cfo'],
+                '영업이익(억원)': oi,
+                '괴리(현금-영업이익)': (item['cfo'] - oi) if oi is not None else None,
+            })
+        cfo_df = pd.DataFrame(rows).set_index('연도')
+        st.dataframe(cfo_df.style.format('{:,.0f}', na_rep='-'), use_container_width=True)
+        gap_years = [r for r in rows if r['괴리(현금-영업이익)'] is not None and r['괴리(현금-영업이익)'] < 0]
+        if len(gap_years) >= 2:
+            st.warning(
+                '⚠️ 최근 3개년 중 2개년 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
+                '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
+                '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
+            )
+        st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
 
     if len(annual_years) >= 2:
         st.divider()

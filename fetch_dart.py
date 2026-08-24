@@ -263,3 +263,67 @@ def fetch_quarterly_financials(corp_code, bsns_years):
             }
 
     return sorted(by_key.values(), key=lambda x: (x['year'], x['quarter'])), fs_div_used
+
+
+# "단일회사 주요 재무지표"(fnlttSinglIndx.json) 응답의 idx_nm -> 우리가 쓰는 키.
+# DART가 idx_cl_code=M220000(안정성)/M210000(수익성)로 나눠주는 지표 중 일부만 쓴다.
+_RATIO_IDX_MAP = {
+    '부채비율': 'debt_ratio', '유동비율': 'current_ratio',
+    '이자보상배율': 'interest_coverage', 'ROE': 'roe', '순이익률': 'net_margin',
+}
+
+
+def fetch_financial_ratios(corp_code, bsns_year):
+    """부채비율·유동비율·이자보상배율·ROE·순이익률을 한 번에 조회한다(fnlttSinglIndx.json,
+    안정성/수익성 지표군 각 1회 호출). DART가 해당 종목·연도에 대해 값을 계산하지
+    못한 지표는 idx_val 자체가 없을 수 있어(예: 이자비용을 구분 공시하지 않는 회사의
+    이자보상배율) 그런 항목은 조용히 빠진다 — 호출부에서 없는 키는 "-"로 표시하면 된다.
+    반환: {'debt_ratio':, 'current_ratio':, 'interest_coverage':, 'roe':, 'net_margin':}
+    (일부 또는 전부 없을 수 있음, 완전 실패 시 빈 dict)."""
+    result = {}
+    for idx_cl_code in ('M220000', 'M210000'):
+        rows = _get('fnlttSinglIndx.json', {
+            'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011',
+            'idx_cl_code': idx_cl_code,
+        })
+        if not rows:
+            continue
+        for row in rows:
+            key = _RATIO_IDX_MAP.get(row.get('idx_nm'))
+            raw = row.get('idx_val')
+            if key is None or not raw:
+                continue
+            try:
+                result[key] = float(str(raw).replace(',', ''))
+            except ValueError:
+                continue
+    return result
+
+
+def fetch_operating_cashflow(corp_code, bsns_year):
+    """최근 3개년 영업활동현금흐름(억원)을 사업보고서 1회 조회로 받는다(전체
+    재무제표 API가 당기/전기/전전기를 한 번에 주는 걸 그대로 활용 — fetch_eps와
+    같은 fnlttSinglAcntAll.json 호출 패턴). 영업이익과 함께 보면 "이익의 질"
+    (영업이익은 있는데 실제 현금은 못 버는 경우)을 가늠할 수 있다. 반환: 연도
+    오름차순 [{'year':, 'cfo':}] — 계정을 못 찾으면 []."""
+    for fs_div in ('CFS', 'OFS'):
+        rows = _get('fnlttSinglAcntAll.json', {
+            'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011', 'fs_div': fs_div,
+        })
+        if not rows:
+            continue
+        cf_row = next(
+            (r for r in rows if r.get('sj_div') == 'CF'
+             and '영업활동' in r.get('account_nm', '') and '현금흐름' in r.get('account_nm', '')),
+            None,
+        )
+        if cf_row is None:
+            continue
+        by_year = {}
+        for amount_key, year_offset in (('thstrm_amount', 0), ('frmtrm_amount', 1), ('bfefrmtrm_amount', 2)):
+            value = _to_amount(cf_row, amount_key)
+            if value is not None:
+                by_year[int(bsns_year) - year_offset] = value
+        if by_year:
+            return sorted(({'year': y, 'cfo': v} for y, v in by_year.items()), key=lambda x: x['year'])
+    return []
