@@ -562,6 +562,21 @@ def fetch_per_universe(market):
     return pd.DataFrame(columns=['PER', '업종명'])
 
 
+@st.cache_data(ttl=24 * 60 * 60)
+def load_krx_listing():
+    """"종목 분석" 검색창용 — 코스피·코스닥 전 종목의 이름·시장 목록(하루 캐시).
+    fetch_portfolio.py의 fetch_krx_listing()(같은 fdr.StockListing 소스, 실패 시
+    None)을 그대로 재사용한다. 실패하면 빈 DataFrame을 반환해 호출부에서 종목코드
+    직접 입력으로 대체할 수 있게 한다."""
+    try:
+        listing = fetch_portfolio.fetch_krx_listing()
+    except Exception:
+        listing = None
+    if listing is None or listing.empty or 'Name' not in listing.columns:
+        return pd.DataFrame(columns=['Name', 'Market'])
+    return listing[['Name', 'Market']]
+
+
 def attach_per_columns(stocks):
     """보유 종목 각각에 자기 PER과 "업계 PER"를 붙인다.
     - 자기 PER: collect_dart.py가 만들어둔 로컬 스냅샷의 EPS가 있으면 그걸 오늘
@@ -1486,6 +1501,165 @@ def render_rs_tab():
         st.warning(f'RS를 계산하지 못했습니다: {e}')
 
 
+def _valuation_signal(per, industry_per):
+    """PER을 업계 PER과 비교해 (점수, 설명) 반환. 점수는 -1(고평가)~+1(저평가)."""
+    if per is None or not industry_per or industry_per <= 0:
+        return 0, '➖ 밸류에이션: PER 데이터가 부족해 판단할 수 없습니다.'
+    ratio = per / industry_per
+    if ratio < 0.8:
+        return 1, f'✅ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배) 대비 낮습니다 — 저평가 신호.'
+    if ratio > 1.2:
+        return -1, f'⚠️ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배) 대비 높습니다 — 고평가 신호.'
+    return 0, f'➖ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배)과 비슷한 수준입니다.'
+
+
+def _position_signal(pos_52w):
+    if pos_52w is None:
+        return 0, '➖ 위치: 52주 데이터가 부족해 판단할 수 없습니다.'
+    if pos_52w >= 80:
+        return -1, f'⚠️ 위치: 52주 구간의 상위 {100 - pos_52w:.0f}% 지점(고점권)입니다 — 추격 매수에 주의하세요.'
+    if pos_52w <= 20:
+        return 1, f'✅ 위치: 52주 구간의 하위 {pos_52w:.0f}% 지점(저점권)입니다.'
+    return 0, f'➖ 위치: 52주 구간의 {pos_52w:.0f}% 지점으로 중립적입니다.'
+
+
+def _trend_signal(gap20, gap60):
+    if gap20 is None or gap60 is None:
+        return 0, '➖ 추세: 이동평균 데이터가 부족해 판단할 수 없습니다.'
+    if gap20 > 0 and gap60 > 0:
+        return 1, f'✅ 추세: 20일선({gap20:+.1f}%)·60일선({gap60:+.1f}%) 모두 위 — 단기 정배열입니다.'
+    if gap20 < 0 and gap60 < 0:
+        return -1, f'⚠️ 추세: 20일선({gap20:+.1f}%)·60일선({gap60:+.1f}%) 모두 아래 — 단기 역배열입니다.'
+    return 0, f'➖ 추세: 20일선 이격도 {gap20:+.1f}%, 60일선 이격도 {gap60:+.1f}% — 혼조세입니다.'
+
+
+def _growth_signal(revenue_yoy, oi_yoy):
+    if revenue_yoy is None or oi_yoy is None:
+        return 0, '➖ 성장성: DART 재무 데이터가 부족해 판단할 수 없습니다.'
+    if revenue_yoy > 0 and oi_yoy > 0:
+        return 1, f'✅ 성장성: 최근 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 동반 성장 중입니다.'
+    if revenue_yoy < 0 and oi_yoy < 0:
+        return -1, f'⚠️ 성장성: 최근 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 동반 역성장 중입니다.'
+    return 0, f'➖ 성장성: 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 방향이 엇갈립니다.'
+
+
+def render_quant_scorecard():
+    """OpenAI API 없이, 이미 이 대시보드가 계산 중인 지표(PER/업계PER·리스크
+    지표·이동평균·DART 성장률)만으로 규칙 기반 판정을 내린다. 보유 종목 여부와
+    무관하게 코스피·코스닥 상장 종목이면 무엇이든 검색해서 볼 수 있다."""
+    listing = load_krx_listing()
+
+    if listing.empty:
+        st.warning('종목 목록을 불러오지 못했습니다. 종목코드를 직접 입력해 주세요.')
+        ticker = st.text_input('종목코드 (6자리)', key='quant_ticker_manual').strip()
+        if not ticker:
+            return
+        name, market = ticker, None
+    else:
+        listing_sorted = listing.sort_values('Name')
+        labels = [f'{row.Name} ({code})' for code, row in listing_sorted.iterrows()]
+        code_by_label = dict(zip(labels, listing_sorted.index))
+        selected_label = st.selectbox(
+            '종목 검색', labels, index=None, placeholder='종목명 또는 코드로 검색 (예: 삼성전자, 005930)',
+            key='quant_search',
+        )
+        if not selected_label:
+            st.info('분석할 종목을 선택하세요. 코스피·코스닥 전 종목이 검색 대상입니다.')
+            return
+        ticker = code_by_label[selected_label]
+        name = listing_sorted.loc[ticker, 'Name']
+        market = listing_sorted.loc[ticker, 'Market']
+
+    try:
+        start_dt = datetime.now() - pd.Timedelta(days=MA_LOOKBACK_DAYS)
+        with st.spinner(f'{name} 데이터를 불러오는 중...'):
+            price_df = fetch_stock_series(ticker, start_dt)
+    except Exception as e:
+        st.warning(f'주가 데이터를 불러오지 못했습니다: {e}')
+        return
+    if price_df.empty:
+        st.warning(f'{name}({ticker})의 주가 데이터를 찾지 못했습니다.')
+        return
+    current_price = float(price_df['Close'].iloc[-1])
+
+    stocks = pd.DataFrame([{'ticker': ticker, 'market': market, 'current_price': current_price}])
+    try:
+        stocks = attach_per_columns(stocks)
+    except Exception:
+        stocks['per'], stocks['industry_name'], stocks['industry_per'] = None, None, None
+    try:
+        stocks = attach_risk_columns(stocks)
+    except Exception:
+        stocks['mdd'], stocks['pos_52w'], stocks['vol_ratio'] = None, None, None
+    row = stocks.iloc[0]
+    per, industry_per = row.get('per'), row.get('industry_per')
+    mdd, pos_52w, vol_ratio = row.get('mdd'), row.get('pos_52w'), row.get('vol_ratio')
+
+    ma_df = price_df[['Close']].copy()
+    for w in MA_WINDOWS:
+        ma_df[f'MA{w}'] = ma_df['Close'].rolling(window=w).mean()
+    gaps = {}
+    if len(ma_df) >= MA_WINDOWS[0]:
+        last = ma_df.iloc[-1]
+        for w in MA_WINDOWS:
+            ma_val = last[f'MA{w}']
+            gaps[w] = (current_price - ma_val) / ma_val * 100 if pd.notna(ma_val) and ma_val else None
+
+    try:
+        annual_years, _ = fetch_dart_financials_cached(ticker)
+    except Exception:
+        annual_years = []
+    revenue_yoy = oi_yoy = None
+    if len(annual_years) >= 2:
+        latest, prev = annual_years[-1], annual_years[-2]
+        revenue_yoy = _growth_pct(latest.get('revenue'), prev.get('revenue'))
+        oi_yoy = _growth_pct(latest.get('operating_income'), prev.get('operating_income'))
+
+    val_score, val_text = _valuation_signal(per, industry_per)
+    pos_score, pos_text = _position_signal(pos_52w)
+    trend_score, trend_text = _trend_signal(gaps.get(20), gaps.get(60))
+    growth_score, growth_text = _growth_signal(revenue_yoy, oi_yoy)
+    total_score = val_score + pos_score + trend_score + growth_score
+
+    st.markdown(f'##### {name} ({ticker}) · {market or "-"}')
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric('현재가', f'{current_price:,.0f}원')
+    c2.metric('PER', f'{per:.1f}배' if per is not None else '-')
+    c3.metric('업계 PER', f'{industry_per:.1f}배' if industry_per is not None else '-')
+    c4.metric('52주 위치', f'{pos_52w:.0f}%' if pos_52w is not None else '-')
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric('고점대비(MDD)', f'{mdd:.1f}%' if mdd is not None else '-')
+    c6.metric('거래량배율', f'{vol_ratio:.1f}배' if vol_ratio is not None else '-')
+    c7.metric('매출 YoY', f'{revenue_yoy:+.1f}%' if revenue_yoy is not None else '-')
+    c8.metric('영업이익 YoY', f'{oi_yoy:+.1f}%' if oi_yoy is not None else '-')
+
+    st.divider()
+    if total_score >= 2:
+        st.success(f'**종합 판정: 긍정 신호 우세** (스코어 {total_score:+d}/4)')
+    elif total_score <= -2:
+        st.error(f'**종합 판정: 주의 신호 우세** (스코어 {total_score:+d}/4)')
+    else:
+        st.info(f'**종합 판정: 중립** (스코어 {total_score:+d}/4)')
+    for text in (val_text, pos_text, trend_text, growth_text):
+        st.markdown(f'- {text}')
+    if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
+        st.markdown(f'- 🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
+    st.caption(
+        '4개 지표(밸류에이션·위치·추세·성장성)를 단순 규칙으로 조합한 점수이며 투자 조언이 아닙니다. '
+        '출처: pykrx/FinanceDataReader/DART (각 지표는 이 대시보드의 기존 캐시 주기를 그대로 따름).'
+    )
+
+    if len(annual_years) >= 2:
+        st.divider()
+        chart_items = annual_years[-5:]
+        x_labels = [str(y['year']) for y in chart_items]
+        st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
+        st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서')
+
+    st.divider()
+    _render_moving_average_section(ticker, name)
+
+
 # 같은 종목을 다시 입력했을 때 매번 유료 API를 다시 호출하지 않도록 길게 캐시한다.
 STOCK_OPINION_TTL_SEC = 6 * 60 * 60
 
@@ -1496,7 +1670,12 @@ def fetch_stock_opinion(company_name, mode):
 
 
 # (표시 라벨, stock_opinion.py의 mode 키, 설명) — 라디오에 순서대로 나온다.
+# 'quant'는 OpenAI API를 쓰지 않는 규칙 기반 모드라 나머지 둘과 처리 경로가 다르다
+# (render_stock_opinion_tab에서 분기).
 STOCK_OPINION_MODES = [
+    ('정량 스코어카드', 'quant',
+     'PER/업계PER·리스크 지표·이동평균·DART 성장률을 규칙으로 조합해 즉시 판정합니다. '
+     'API 키가 없어도 코스피·코스닥 전 종목을 검색해 볼 수 있습니다.'),
     ('월스트리트 DCF/Comps', 'dcf',
      'Narrative → Reverse DCF → DCF → Comps → 민감도 순으로, 숫자를 정밀하게 계산해 적정가를 추정합니다.'),
     ('테마·모트 분석', 'theme',
@@ -1511,10 +1690,16 @@ def render_stock_opinion_tab():
     mode_labels = [label for label, _, _ in STOCK_OPINION_MODES]
     selected_label = st.radio('분석 방식', mode_labels, horizontal=True, key='stock_opinion_mode')
     _, mode, mode_desc = next(m for m in STOCK_OPINION_MODES if m[0] == selected_label)
+
+    if mode == 'quant':
+        st.caption(mode_desc)
+        render_quant_scorecard()
+        return
+
     st.caption(f'{mode_desc} 웹 검색을 포함해 1~5분 정도 걸릴 수 있습니다.')
 
     if not os.environ.get('OPENAI_API_KEY'):
-        st.info('OPENAI_API_KEY 가 설정되어 있지 않아 이 탭을 쓸 수 없습니다. Secrets에 키를 추가해 주세요.')
+        st.info('OPENAI_API_KEY 가 설정되어 있지 않아 이 분석 방식은 쓸 수 없습니다. Secrets에 키를 추가하거나, "정량 스코어카드"를 이용해 주세요.')
         return
 
     company_name = st.text_input(
