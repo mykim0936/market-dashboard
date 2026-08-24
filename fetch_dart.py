@@ -349,3 +349,42 @@ def fetch_disclosures(corp_code, bgn_de, end_de, page_count=100):
         }
         for r in rows
     ]
+
+
+def fetch_capital_changes(corp_code, bsns_year):
+    """유상증자·무상증자·전환사채(CB) 전환·주식매수선택권 행사 등 자본금 변동
+    이력(증자·감자 현황, irdsSttus.json). 반환: [{'date':, 'type':, 'qty':}]
+    (date는 'YYYY.MM.DD' 문자열, DART가 준 순서 그대로) — 실패/없음 시 []."""
+    rows = _get('irdsSttus.json', {
+        'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011',
+    })
+    if not rows:
+        return []
+    items = []
+    for r in rows:
+        try:
+            qty = float((r.get('isu_dcrs_qy') or '').replace(',', ''))
+        except ValueError:
+            qty = None
+        items.append({'date': r.get('isu_dcrs_de'), 'type': r.get('isu_dcrs_stle'), 'qty': qty})
+    return items
+
+
+def fetch_largest_shareholder(corp_code, bsns_year):
+    """최대주주(및 특수관계인) 최신 지분율 1개 시점만 뽑는다(최대주주 현황,
+    hyslrSttus.json) — 분기별 추이는 호출량이 많아 이번 버전에서는 다루지 않는다.
+    반환: {'name':, 'total_pct':} — 특수관계인 합계('계') 행이 있으면 그 지분율을,
+    없으면 본인 단독 지분율을 쓴다. 못 찾으면 {}."""
+    rows = _get('hyslrSttus.json', {
+        'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011',
+    })
+    if not rows:
+        return {}
+    total_row = next((r for r in rows if r.get('nm') == '계' and r.get('stock_knd') == '보통주'), None)
+    first_row = rows[0]
+    pct_row = total_row or first_row
+    try:
+        total_pct = float(str(pct_row.get('trmend_posesn_stock_qota_rt')).replace(',', ''))
+    except (TypeError, ValueError):
+        total_pct = None
+    return {'name': first_row.get('nm'), 'total_pct': total_pct}

@@ -619,6 +619,34 @@ def fetch_stock_shorting(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_capital_changes_cached(ticker):
+    """정량 스코어카드의 희석위험 판정용 — 최근 사업연도의 자본금 변동 이력."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return []
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        changes = fetch_dart.fetch_capital_changes(corp_code, str(bsns_year))
+        if changes:
+            return changes
+    return []
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_largest_shareholder_cached(ticker):
+    """정량 스코어카드의 지배구조 카드용 — 최대주주(+특수관계인) 최신 지분율."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return {}
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        info = fetch_dart.fetch_largest_shareholder(corp_code, str(bsns_year))
+        if info:
+            return info
+    return {}
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_quarterly_financials_cached(ticker):
     """종목 상세 패널의 분기별 보기용 — 최근 최대 8개 분기 매출액·영업이익(억원)을
     구한다. 반환: (분기 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
@@ -1631,6 +1659,36 @@ def _growth_signal(revenue_yoy, oi_yoy):
     return 0, f'➖ 성장성: 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 방향이 엇갈립니다.'
 
 
+def _stability_signal(debt_ratio, interest_coverage):
+    if debt_ratio is None and interest_coverage is None:
+        return 0, '➖ 안정성: 데이터가 부족해 판단할 수 없습니다.'
+    warnings = []
+    if interest_coverage is not None and interest_coverage < 1:
+        warnings.append(f'이자보상배율 {interest_coverage:.1f}배(1 미만 — 영업이익으로 이자비용도 못 감당)')
+    if debt_ratio is not None and debt_ratio > 200:
+        warnings.append(f'부채비율 {debt_ratio:.0f}%(200% 초과)')
+    if warnings:
+        return -1, '⚠️ 안정성: ' + ', '.join(warnings) + ' — 재무 부담이 큽니다.'
+    if debt_ratio is not None and debt_ratio < 100:
+        return 1, f'✅ 안정성: 부채비율 {debt_ratio:.0f}%로 자기자본보다 부채가 적고, 특별한 위험 신호가 없습니다.'
+    return 0, '➖ 안정성: 뚜렷한 위험 신호는 없으나 우량하다고 보기도 애매한 수준입니다.'
+
+
+# 최근 1년 내 발생하면 지분 희석으로 볼 수 있는 자본변동 유형.
+DILUTIVE_CHANGE_TYPES = ('유상증자', '전환권행사', '신주인수권행사')
+
+
+def _dilution_signal(capital_changes):
+    if not capital_changes:
+        return 0, '➖ 희석위험: 최근 자본변동 이력을 찾지 못했습니다.'
+    cutoff = (datetime.now() - pd.Timedelta(days=365)).strftime('%Y.%m.%d')
+    recent = [c for c in capital_changes if c['type'] in DILUTIVE_CHANGE_TYPES and (c['date'] or '') >= cutoff]
+    if recent:
+        types_found = ', '.join(sorted({c['type'] for c in recent}))
+        return -1, f'⚠️ 희석위험: 최근 1년 내 {types_found} 이력이 있습니다 — 지분 희석 가능성을 확인하세요.'
+    return 1, '✅ 희석위험: 최근 1년 내 유상증자·전환사채 전환 등 희석 이벤트가 없습니다.'
+
+
 def render_quant_scorecard():
     """OpenAI API 없이, 이미 이 대시보드가 계산 중인 지표(PER/업계PER·리스크
     지표·이동평균·DART 성장률)만으로 규칙 기반 판정을 내린다. 보유 종목 여부와
@@ -1729,157 +1787,198 @@ def render_quant_scorecard():
         cfo_list = fetch_dart_cashflow_cached(ticker)
     except Exception:
         cfo_list = []
+    try:
+        capital_changes = fetch_dart_capital_changes_cached(ticker)
+    except Exception:
+        capital_changes = []
+    try:
+        shareholder = fetch_dart_largest_shareholder_cached(ticker)
+    except Exception:
+        shareholder = {}
 
     val_score, val_text = _valuation_signal(per, industry_per)
     pos_score, pos_text = _position_signal(pos_52w)
     trend_score, trend_text = _trend_signal(gaps.get(20), gaps.get(60))
     growth_score, growth_text = _growth_signal(revenue_yoy, oi_yoy)
-    total_score = val_score + pos_score + trend_score + growth_score
+    stability_score, stability_text = _stability_signal(debt_ratio, interest_coverage)
+    dilution_score, dilution_text = _dilution_signal(capital_changes)
+    total_score = val_score + pos_score + trend_score + growth_score + stability_score + dilution_score
+    all_signals = (val_text, pos_text, trend_text, growth_text, stability_text, dilution_text)
 
     st.markdown(f'##### {name} ({ticker}) · {market or "-"}')
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric('현재가', f'{current_price:,.0f}원')
-    c2.metric('PER', f'{per:.1f}배' if per is not None else '-')
-    c3.metric('업계 PER', f'{industry_per:.1f}배' if industry_per is not None else '-')
-    c4.metric('52주 위치', f'{pos_52w:.0f}%' if pos_52w is not None else '-')
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric('고점대비(MDD)', f'{mdd:.1f}%' if mdd is not None else '-')
-    c6.metric('거래량배율', f'{vol_ratio:.1f}배' if vol_ratio is not None else '-')
-    c7.metric('매출 YoY', f'{revenue_yoy:+.1f}%' if revenue_yoy is not None else '-')
-    c8.metric('영업이익 YoY', f'{oi_yoy:+.1f}%' if oi_yoy is not None else '-')
+    if stability_score == -1 or dilution_score == -1:
+        risk_lines = [t for t, s in zip((stability_text, dilution_text), (stability_score, dilution_score)) if s == -1]
+        st.error('🚨 **주의: 재무·지배구조 위험 신호가 있습니다** — ' + ' / '.join(risk_lines))
 
-    st.divider()
-    if total_score >= 2:
-        st.success(f'**종합 판정: 긍정 신호 우세** (스코어 {total_score:+d}/4)')
-    elif total_score <= -2:
-        st.error(f'**종합 판정: 주의 신호 우세** (스코어 {total_score:+d}/4)')
-    else:
-        st.info(f'**종합 판정: 중립** (스코어 {total_score:+d}/4)')
-    for text in (val_text, pos_text, trend_text, growth_text):
-        st.markdown(f'- {text}')
-    if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
-        st.markdown(f'- 🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
-    st.caption(
-        '4개 지표(밸류에이션·위치·추세·성장성)를 단순 규칙으로 조합한 점수이며 투자 조언이 아닙니다. '
-        '출처: pykrx/FinanceDataReader/DART (각 지표는 이 대시보드의 기존 캐시 주기를 그대로 따름).'
+    tab_overview, tab_valuation, tab_stability, tab_flow, tab_events = st.tabs(
+        ['개요', '밸류에이션', '재무 안정성', '수급·기술', '공시·이벤트']
     )
 
-    st.divider()
-    st.markdown('##### 재무 안정성 · 밸류에이션 보강')
-    d1, d2, d3, d4 = st.columns(4)
-    d1.metric('부채비율', f'{debt_ratio:.0f}%' if debt_ratio is not None else '-')
-    d2.metric('유동비율', f'{current_ratio:.0f}%' if current_ratio is not None else '-')
-    d3.metric(
-        '이자보상배율', f'{interest_coverage:.1f}배' if interest_coverage is not None else '-',
-        delta='위험' if interest_coverage is not None and interest_coverage < 1 else None,
-        delta_color='inverse',
-    )
-    d4.metric('ROE', f'{roe:.1f}%' if roe is not None else '-')
-    d5, d6, d7 = st.columns(3)
-    d5.metric('PBR', f'{pbr:.2f}배' if pbr is not None else '-')
-    d6.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
-    d7.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
-    st.caption(
-        '부채비율·유동비율·이자보상배율·ROE는 DART 사업보고서 재무지표(하루 캐시) · '
-        'PBR은 pykrx 시장 전체 조회(10분 캐시) · PSR=PER×순이익률, PEG=PER÷영업이익 YoY(둘 다 이 페이지에서 계산). '
-        '이자보상배율이 1 미만이면 영업이익으로 이자비용도 못 감당한다는 뜻입니다. '
-        '값이 없는 항목은 DART가 해당 종목·연도에 대해 그 지표를 계산해 공시하지 않은 경우입니다.'
-    )
+    with tab_overview:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric('현재가', f'{current_price:,.0f}원')
+        c2.metric('PER', f'{per:.1f}배' if per is not None else '-')
+        c3.metric('업계 PER', f'{industry_per:.1f}배' if industry_per is not None else '-')
+        c4.metric('52주 위치', f'{pos_52w:.0f}%' if pos_52w is not None else '-')
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric('고점대비(MDD)', f'{mdd:.1f}%' if mdd is not None else '-')
+        c6.metric('거래량배율', f'{vol_ratio:.1f}배' if vol_ratio is not None else '-')
+        c7.metric('매출 YoY', f'{revenue_yoy:+.1f}%' if revenue_yoy is not None else '-')
+        c8.metric('영업이익 YoY', f'{oi_yoy:+.1f}%' if oi_yoy is not None else '-')
 
-    if len(cfo_list) >= 1:
-        st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 3개년)')
-        oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
-        rows = []
-        for item in cfo_list:
-            year = item['year']
-            oi = oi_by_year.get(year)
-            rows.append({
-                '연도': year, '영업활동현금흐름(억원)': item['cfo'],
-                '영업이익(억원)': oi,
-                '괴리(현금-영업이익)': (item['cfo'] - oi) if oi is not None else None,
-            })
-        cfo_df = pd.DataFrame(rows).set_index('연도')
-        st.dataframe(cfo_df.style.format('{:,.0f}', na_rep='-'), use_container_width=True)
-        gap_years = [r for r in rows if r['괴리(현금-영업이익)'] is not None and r['괴리(현금-영업이익)'] < 0]
-        if len(gap_years) >= 2:
-            st.warning(
-                '⚠️ 최근 3개년 중 2개년 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
-                '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
-                '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
-            )
-        st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
-
-    st.divider()
-    st.markdown('##### 수급 · 공시')
-    try:
-        flow_df = fetch_stock_investor_flow(ticker)
-    except Exception:
-        flow_df = pd.DataFrame()
-    if not flow_df.empty and {'외국인합계', '기관합계', '개인'}.issubset(flow_df.columns):
-        chart_df = flow_df[['외국인합계', '기관합계', '개인']].div(1e8).cumsum().reset_index()
-        chart_df.columns = ['날짜', '외국인합계', '기관합계', '개인']
-        melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
-        flow_chart = (
-            alt.Chart(melted)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X('날짜:T', title=None),
-                y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
-                color=alt.Color(
-                    '주체:N', title=None,
-                    scale=alt.Scale(domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE]),
-                ),
-                tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
-            )
-            .properties(height=260)
-            .interactive()
-        )
-        st.altair_chart(flow_chart, use_container_width=True)
-        st.caption(f'{name} 개별 종목 기준 최근 {len(flow_df)}거래일 누적 순매수 · 출처: pykrx (KRX 투자자별 거래대금)')
-    else:
-        st.info('종목별 수급 데이터를 불러오지 못했습니다.')
-
-    try:
-        short_df = fetch_stock_shorting(ticker)
-    except Exception:
-        short_df = pd.DataFrame()
-    if not short_df.empty and '비중' in short_df.columns:
-        latest_date = short_df.index[-1]
-        latest_date_str = latest_date.strftime('%Y-%m-%d') if hasattr(latest_date, 'strftime') else str(latest_date)
-        st.metric('공매도 비중(최신)', f"{short_df['비중'].iloc[-1]:.2f}%")
-        st.caption(f'{latest_date_str} 기준 · 상장주식수 대비 공매도 잔고 비중 · 출처: pykrx (공매도 잔고 현황)')
-
-    st.markdown('###### 최근 공시 (6개월)')
-    try:
-        disclosures = fetch_dart_disclosures_cached(ticker)
-    except Exception:
-        disclosures = []
-    if not disclosures:
-        st.caption('최근 6개월 내 공시 내역을 찾지 못했습니다.')
-    else:
-        lines = []
-        for d in disclosures[:30]:
-            date_str = d.get('rcept_dt') or ''
-            date_fmt = f'{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}' if len(date_str) == 8 else date_str
-            report_nm = d.get('report_nm', '')
-            highlighted = any(kw in report_nm for kw in DISCLOSURE_HIGHLIGHT_KEYWORDS)
-            prefix = '🔴' if highlighted else '•'
-            lines.append(f'{prefix} `{date_fmt}` {report_nm}')
-        st.markdown('\n'.join(lines))
-        st.caption(
-            f'최근 {len(disclosures)}건 중 최신 30건 표시 · 🔴 = 증자·전환사채·최대주주변경·합병분할 등 주요 이벤트 · '
-            '출처: DART 공시검색, 하루 캐시.'
-        )
-
-    if len(annual_years) >= 2:
         st.divider()
-        chart_items = annual_years[-5:]
-        x_labels = [str(y['year']) for y in chart_items]
-        st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
-        st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서')
+        if total_score >= 3:
+            st.success(f'**종합 판정: 긍정 신호 우세** (스코어 {total_score:+d}/6)')
+        elif total_score <= -3:
+            st.error(f'**종합 판정: 주의 신호 우세** (스코어 {total_score:+d}/6)')
+        else:
+            st.info(f'**종합 판정: 중립** (스코어 {total_score:+d}/6)')
+        for text in all_signals:
+            st.markdown(f'- {text}')
+        if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
+            st.markdown(f'- 🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
+        st.caption(
+            '6개 지표(밸류에이션·위치·추세·성장성·안정성·희석위험)를 단순 규칙으로 조합한 점수이며 투자 조언이 아닙니다. '
+            '출처: pykrx/FinanceDataReader/DART (각 지표는 이 대시보드의 기존 캐시 주기를 그대로 따름).'
+        )
 
-    st.divider()
-    _render_moving_average_section(ticker, name)
+        if len(annual_years) >= 2:
+            st.divider()
+            chart_items = annual_years[-5:]
+            x_labels = [str(y['year']) for y in chart_items]
+            st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
+            st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서')
+
+    with tab_valuation:
+        v1, v2, v3 = st.columns(3)
+        v1.metric('PER', f'{per:.1f}배' if per is not None else '-')
+        v2.metric('업계 PER', f'{industry_per:.1f}배' if industry_per is not None else '-')
+        v3.metric('PBR', f'{pbr:.2f}배' if pbr is not None else '-')
+        v4, v5 = st.columns(2)
+        v4.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
+        v5.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
+        st.markdown(f'- {val_text}')
+        st.caption(
+            'PBR은 pykrx 시장 전체 조회(10분 캐시) · PSR=PER×순이익률, PEG=PER÷영업이익 YoY(이 페이지에서 계산). '
+            'PEG는 1보다 낮으면 성장성 대비 저평가로, 높으면 고평가로 보는 게 일반적인 해석입니다.'
+        )
+
+    with tab_stability:
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric('부채비율', f'{debt_ratio:.0f}%' if debt_ratio is not None else '-')
+        d2.metric('유동비율', f'{current_ratio:.0f}%' if current_ratio is not None else '-')
+        d3.metric(
+            '이자보상배율', f'{interest_coverage:.1f}배' if interest_coverage is not None else '-',
+            delta='위험' if interest_coverage is not None and interest_coverage < 1 else None,
+            delta_color='inverse',
+        )
+        d4.metric('ROE', f'{roe:.1f}%' if roe is not None else '-')
+        st.markdown(f'- {stability_text}')
+        st.caption(
+            '부채비율·유동비율·이자보상배율·ROE는 DART 사업보고서 재무지표(하루 캐시). '
+            '값이 없는 항목은 DART가 해당 종목·연도에 대해 그 지표를 계산해 공시하지 않은 경우입니다.'
+        )
+
+        if len(cfo_list) >= 1:
+            st.divider()
+            st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 3개년)')
+            oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
+            rows = []
+            for item in cfo_list:
+                year = item['year']
+                oi = oi_by_year.get(year)
+                rows.append({
+                    '연도': year, '영업활동현금흐름(억원)': item['cfo'],
+                    '영업이익(억원)': oi,
+                    '괴리(현금-영업이익)': (item['cfo'] - oi) if oi is not None else None,
+                })
+            cfo_df = pd.DataFrame(rows).set_index('연도')
+            st.dataframe(cfo_df.style.format('{:,.0f}', na_rep='-'), use_container_width=True)
+            gap_years = [r for r in rows if r['괴리(현금-영업이익)'] is not None and r['괴리(현금-영업이익)'] < 0]
+            if len(gap_years) >= 2:
+                st.warning(
+                    '⚠️ 최근 3개년 중 2개년 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
+                    '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
+                    '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
+                )
+            st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
+
+    with tab_flow:
+        try:
+            flow_df = fetch_stock_investor_flow(ticker)
+        except Exception:
+            flow_df = pd.DataFrame()
+        if not flow_df.empty and {'외국인합계', '기관합계', '개인'}.issubset(flow_df.columns):
+            chart_df = flow_df[['외국인합계', '기관합계', '개인']].div(1e8).cumsum().reset_index()
+            chart_df.columns = ['날짜', '외국인합계', '기관합계', '개인']
+            melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
+            flow_chart = (
+                alt.Chart(melted)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X('날짜:T', title=None),
+                    y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        '주체:N', title=None,
+                        scale=alt.Scale(domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE]),
+                    ),
+                    tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
+                )
+                .properties(height=260)
+                .interactive()
+            )
+            st.altair_chart(flow_chart, use_container_width=True)
+            st.caption(f'{name} 개별 종목 기준 최근 {len(flow_df)}거래일 누적 순매수 · 출처: pykrx (KRX 투자자별 거래대금)')
+        else:
+            st.info('종목별 수급 데이터를 불러오지 못했습니다.')
+
+        try:
+            short_df = fetch_stock_shorting(ticker)
+        except Exception:
+            short_df = pd.DataFrame()
+        if not short_df.empty and '비중' in short_df.columns:
+            latest_date = short_df.index[-1]
+            latest_date_str = latest_date.strftime('%Y-%m-%d') if hasattr(latest_date, 'strftime') else str(latest_date)
+            st.metric('공매도 비중(최신)', f"{short_df['비중'].iloc[-1]:.2f}%")
+            st.caption(f'{latest_date_str} 기준 · 상장주식수 대비 공매도 잔고 비중 · 출처: pykrx (공매도 잔고 현황)')
+
+        st.divider()
+        _render_moving_average_section(ticker, name)
+
+    with tab_events:
+        st.markdown('###### 지배구조 · 희석위험')
+        if shareholder.get('total_pct') is not None:
+            st.metric(f"최대주주(+특수관계인) 지분율 — {shareholder.get('name') or '-'}", f"{shareholder['total_pct']:.2f}%")
+        st.markdown(f'- {dilution_text}')
+        if capital_changes:
+            with st.expander(f'최근 자본변동 이력 ({len(capital_changes)}건)'):
+                for c in capital_changes[:15]:
+                    qty_str = f"{c['qty']:,.0f}주" if c.get('qty') is not None else '-'
+                    st.markdown(f"- `{c.get('date') or '-'}` {c.get('type') or '-'} ({qty_str})")
+        st.caption('출처: DART 증자(감자) 현황 · 최대주주 현황, 하루 캐시.')
+
+        st.divider()
+        st.markdown('###### 최근 공시 (6개월)')
+        try:
+            disclosures = fetch_dart_disclosures_cached(ticker)
+        except Exception:
+            disclosures = []
+        if not disclosures:
+            st.caption('최근 6개월 내 공시 내역을 찾지 못했습니다.')
+        else:
+            lines = []
+            for d in disclosures[:30]:
+                date_str = d.get('rcept_dt') or ''
+                date_fmt = f'{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}' if len(date_str) == 8 else date_str
+                report_nm = d.get('report_nm', '')
+                highlighted = any(kw in report_nm for kw in DISCLOSURE_HIGHLIGHT_KEYWORDS)
+                prefix = '🔴' if highlighted else '•'
+                lines.append(f'{prefix} `{date_fmt}` {report_nm}')
+            st.markdown('\n'.join(lines))
+            st.caption(
+                f'최근 {len(disclosures)}건 중 최신 30건 표시 · 🔴 = 증자·전환사채·최대주주변경·합병분할 등 주요 이벤트 · '
+                '출처: DART 공시검색, 하루 캐시.'
+            )
 
 
 # 같은 종목을 다시 입력했을 때 매번 유료 API를 다시 호출하지 않도록 길게 캐시한다.
