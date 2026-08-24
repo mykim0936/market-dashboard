@@ -1262,11 +1262,17 @@ MA_LOOKBACK_DAYS = 420  # 120일 이동평균이 초반부터 안정되도록 �
 MA_DISPLAY_DAYS = 180
 
 
+BB_WINDOW = 20
+BB_STD_MULT = 2
+RSI_WINDOW = 14
+MACD_FAST, MACD_SLOW, MACD_SIGNAL = 12, 26, 9
+
+
 def _render_moving_average_section(ticker, selected_name):
-    """20·60·120일 이동평균선을 주가에 겹쳐 그리고, 현재가가 각 이동평균선 대비
-    얼마나 떨어져 있는지(이격도, %)를 카드로 보여준다. 이격도가 크게 벌어져 있으면
-    추세가 과열/과매도 상태일 수 있다는 뜻으로 흔히 쓰인다."""
-    st.subheader('이동평균선 · 이격도')
+    """20·60·120일 이동평균선(+볼린저밴드)을 주가에 겹쳐 그리고, 이격도·RSI·MACD로
+    추세 과열/과매도와 방향 전환 신호를 함께 본다. 전부 이미 받아오는 주가
+    시계열(FDR)만으로 계산하고 새 API 호출은 없다."""
+    st.subheader('이동평균선 · 이격도 · RSI · MACD')
 
     try:
         start_dt = datetime.now() - pd.Timedelta(days=MA_LOOKBACK_DAYS)
@@ -1283,6 +1289,31 @@ def _render_moving_average_section(ticker, selected_name):
     ma_df = price_df[['Close']].copy()
     for window in MA_WINDOWS:
         ma_df[f'MA{window}'] = ma_df['Close'].rolling(window=window).mean()
+
+    # 볼린저밴드 — 20일 이동평균 ± 2표준편차. 주가가 상단 밴드 위/하단 밴드 아래로
+    # 벗어나면 통계적으로 드문(과열/과매도) 구간이라는 뜻으로 흔히 쓰인다.
+    bb_std = ma_df['Close'].rolling(window=BB_WINDOW).std()
+    ma_df['BB상단'] = ma_df['MA20'] + BB_STD_MULT * bb_std
+    ma_df['BB하단'] = ma_df['MA20'] - BB_STD_MULT * bb_std
+
+    # RSI(14) — Wilder의 지수평활 방식. 70 이상 과매수, 30 이하 과매도로 흔히 해석한다.
+    delta = ma_df['Close'].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.ewm(alpha=1 / RSI_WINDOW, min_periods=RSI_WINDOW, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / RSI_WINDOW, min_periods=RSI_WINDOW, adjust=False).mean()
+    rs = avg_gain / avg_loss
+    ma_df['RSI'] = 100 - (100 / (1 + rs))
+    ma_df.loc[avg_loss == 0, 'RSI'] = 100  # 손실이 아예 없으면 RS가 무한대 -> RSI 100
+
+    # MACD(12,26,9) — 단기/장기 지수이동평균 차이(추세)와 그 신호선(9일 EMA).
+    # MACD가 신호선을 상향/하향 돌파하면 흔히 골든/데드크로스로 해석한다.
+    ema_fast = ma_df['Close'].ewm(span=MACD_FAST, adjust=False).mean()
+    ema_slow = ma_df['Close'].ewm(span=MACD_SLOW, adjust=False).mean()
+    ma_df['MACD'] = ema_fast - ema_slow
+    ma_df['MACD_signal'] = ma_df['MACD'].ewm(span=MACD_SIGNAL, adjust=False).mean()
+    ma_df['MACD_hist'] = ma_df['MACD'] - ma_df['MACD_signal']
+
     display_df = ma_df.tail(MA_DISPLAY_DAYS).reset_index()
     date_col = display_df.columns[0]
     display_df = display_df.rename(columns={date_col: 'Date', 'Close': '주가'})
@@ -1309,15 +1340,25 @@ def _render_moving_average_section(ticker, selected_name):
         )
         for w in MA_WINDOWS
     ]
-    chart = alt.layer(price_line, *ma_lines).properties(height=320).interactive()
+    bb_lines = [
+        alt.Chart(display_df)
+        .mark_line(color=SWISS_GRAY, strokeDash=[2, 2], opacity=0.6)
+        .encode(
+            x=alt.X('Date:T', title=None),
+            y=alt.Y(f'{label}:Q', title=None),
+            tooltip=[alt.Tooltip('Date:T'), alt.Tooltip(f'{label}:Q', title=f'볼린저밴드 {label}', format=',.0f')],
+        )
+        for label in ('BB상단', 'BB하단')
+    ]
+    chart = alt.layer(price_line, *ma_lines, *bb_lines).properties(height=320).interactive()
 
     ma_chart_col, _ = st.columns(2)
     with ma_chart_col:
         st.altair_chart(chart, use_container_width=True)
     st.caption(
         f'{selected_name} 주가(흰색)와 20일선(초록 실선)·60일선(회색 실선)·120일선'
-        '(회색 점선). 최근 180거래일만 표시하되, 이동평균 자체는 그 이전 데이터까지 '
-        '포함해 계산합니다.'
+        '(회색 점선)·볼린저밴드 상하단(회색 점선, 20일선 ± 2표준편차). 최근 180거래일만 '
+        '표시하되, 지표 자체는 그 이전 데이터까지 포함해 계산합니다.'
     )
 
     current = display_df['주가'].iloc[-1]
@@ -1327,6 +1368,70 @@ def _render_moving_average_section(ticker, selected_name):
         gap = (current - ma_value) / ma_value * 100 if pd.notna(ma_value) and ma_value else None
         col.metric(f'{window}일선 이격도', f'{gap:+.1f}%' if gap is not None else '-', delta_color='off')
     st.caption('이격도 = (현재가 − 이동평균) / 이동평균 × 100. 양수면 이동평균 위, 음수면 아래에 있다는 뜻입니다.')
+
+    st.divider()
+    rsi_col, macd_col = st.columns(2)
+
+    with rsi_col:
+        st.markdown('###### RSI(14)')
+        rsi_chart_df = display_df[['Date', 'RSI']].dropna()
+        if rsi_chart_df.empty:
+            st.info('RSI를 계산할 만큼 데이터가 충분하지 않습니다.')
+        else:
+            rsi_line = (
+                alt.Chart(rsi_chart_df)
+                .mark_line(color=SWISS_GREEN)
+                .encode(
+                    x=alt.X('Date:T', title=None),
+                    y=alt.Y('RSI:Q', title=None, scale=alt.Scale(domain=[0, 100])),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('RSI:Q', format='.1f')],
+                )
+            )
+            rsi_bands = (
+                alt.Chart(pd.DataFrame({'y': [30, 70]}))
+                .mark_rule(strokeDash=[2, 2], color=SWISS_GRAY)
+                .encode(y='y:Q')
+            )
+            st.altair_chart((rsi_bands + rsi_line).properties(height=200).interactive(), use_container_width=True)
+            latest_rsi = rsi_chart_df['RSI'].iloc[-1]
+            rsi_label = '과매수' if latest_rsi >= 70 else ('과매도' if latest_rsi <= 30 else '중립')
+            st.metric('현재 RSI', f'{latest_rsi:.1f} ({rsi_label})', delta_color='off')
+            st.caption('70 이상 과매수, 30 이하 과매도로 흔히 해석합니다(점선 기준선).')
+
+    with macd_col:
+        st.markdown('###### MACD(12, 26, 9)')
+        macd_chart_df = display_df[['Date', 'MACD', 'MACD_signal', 'MACD_hist']].dropna()
+        if macd_chart_df.empty:
+            st.info('MACD를 계산할 만큼 데이터가 충분하지 않습니다.')
+        else:
+            macd_bar = (
+                alt.Chart(macd_chart_df)
+                .mark_bar(color=SWISS_GRAY, opacity=0.5)
+                .encode(
+                    x=alt.X('Date:T', title=None),
+                    y=alt.Y('MACD_hist:Q', title=None),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_hist:Q', title='히스토그램', format=',.0f')],
+                )
+            )
+            macd_line = (
+                alt.Chart(macd_chart_df)
+                .mark_line(color=SWISS_GREEN)
+                .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD:Q', title=None),
+                        tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD:Q', format=',.0f')])
+            )
+            signal_line = (
+                alt.Chart(macd_chart_df)
+                .mark_line(color=SWISS_WHITE, strokeDash=[3, 2])
+                .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD_signal:Q', title=None),
+                        tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_signal:Q', title='시그널', format=',.0f')])
+            )
+            st.altair_chart(
+                (macd_bar + macd_line + signal_line).properties(height=200).interactive(), use_container_width=True
+            )
+            latest = macd_chart_df.iloc[-1]
+            cross_label = 'MACD가 시그널선 위 (상승 모멘텀)' if latest['MACD'] >= latest['MACD_signal'] else 'MACD가 시그널선 아래 (하락 모멘텀)'
+            st.metric('MACD − 시그널', f"{latest['MACD_hist']:+,.0f}", delta_color='off')
+            st.caption(f'{cross_label} · 초록선=MACD, 흰 점선=시그널선, 막대=둘의 차이(히스토그램).')
 
 
 def render_stock_detail_panel():
@@ -1823,6 +1928,10 @@ def render_quant_scorecard():
         c6.metric('거래량배율', f'{vol_ratio:.1f}배' if vol_ratio is not None else '-')
         c7.metric('매출 YoY', f'{revenue_yoy:+.1f}%' if revenue_yoy is not None else '-')
         c8.metric('영업이익 YoY', f'{oi_yoy:+.1f}%' if oi_yoy is not None else '-')
+        if mdd is not None and mdd >= -0.5:
+            st.caption('🔔 52주 신고가 갱신 중입니다.')
+        elif pos_52w is not None and pos_52w <= 0.5:
+            st.caption('🔔 52주 신저가 갱신 중입니다.')
 
         st.divider()
         if total_score >= 3:
@@ -1902,6 +2011,12 @@ def render_quant_scorecard():
             st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
 
     with tab_flow:
+        if 'Volume' in price_df.columns and len(price_df) >= 20:
+            avg_trading_value = (price_df['Close'] * price_df['Volume']).tail(20).mean() / 1e8
+            st.metric('일평균 거래대금(최근 20거래일)', f'{avg_trading_value:,.0f}억원')
+            st.caption('거래대금 = 종가 × 거래량(근사치) · 값이 작을수록 사고팔기 부담스러운(유동성 낮은) 종목입니다.')
+            st.divider()
+
         try:
             flow_df = fetch_stock_investor_flow(ticker)
         except Exception:
