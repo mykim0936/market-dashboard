@@ -656,6 +656,19 @@ def fetch_dart_quarterly_financials_cached(ticker):
     return items[-8:], fs_div
 
 
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_quarterly_financials_3y_cached(ticker):
+    """정량 스코어카드용 — 최근 3년(최대 12개 분기) 매출액·영업이익(억원).
+    기존 종목 상세 패널(fetch_dart_quarterly_financials_cached, 2년/8분기)과는
+    호출부가 달라 별도로 캐시한다."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return [], None
+    this_year = datetime.now().year
+    items, fs_div = fetch_dart.fetch_quarterly_financials(corp_code, [this_year, this_year - 1, this_year - 2])
+    return items[-12:], fs_div
+
+
 @st.cache_data(ttl=PER_TTL_SEC)
 def fetch_per_universe(market):
     """market('KOSPI'/'KOSDAQ') 전체 종목의 PER·PBR·업종명을 한 번에 받아온다 — 종목별로
@@ -1792,6 +1805,44 @@ def _dilution_signal(capital_changes):
     return 1, '✅ 희석위험: 최근 1년 내 유상증자·전환사채 전환 등 희석 이벤트가 없습니다.'
 
 
+def _tier_and_icon(value, low_cut, high_cut, higher_is_better):
+    """값 하나를 (상/중/하 수준, 신호 아이콘)으로 바꾼다. low_cut/high_cut은
+    "낮다/보통/높다" 구간의 경계값이고, higher_is_better는 그 지표가 높을수록
+    좋은지(예: ROE) 낮을수록 좋은지(예: 부채비율)를 뜻한다 — 같은 "상"이라도
+    지표에 따라 좋은 신호(✅)일 수도 나쁜 신호(❌)일 수도 있어 방향을 따로 받는다."""
+    if value is None:
+        return None, '-'
+    level = '하' if value < low_cut else ('상' if value > high_cut else '중')
+    if higher_is_better:
+        icon = '✅' if value > high_cut else ('❌' if value < low_cut else '⚠️')
+    else:
+        icon = '✅' if value < low_cut else ('❌' if value > high_cut else '⚠️')
+    return level, icon
+
+
+def _peer_ratio_tier(value, peer_value, higher_is_better=False):
+    """업종 평균 대비 실제 동종업계 중앙값과 비교한 상/중/하 — PER·PBR처럼 pykrx
+    시장 전체 데이터로 진짜 업종 평균을 계산할 수 있는 지표에만 쓴다(비율 0.8/1.2
+    를 경계로 삼는 건 기존 _valuation_signal과 같은 기준)."""
+    if value is None or not peer_value or peer_value <= 0:
+        return None, '-'
+    ratio = value / peer_value
+    return _tier_and_icon(ratio, 0.8, 1.2, higher_is_better)
+
+
+def _build_indicator_table(rows):
+    """rows: [(지표명, 값, 서식문자열, 수준, 아이콘)] -> st.dataframe에 바로 넣을 DataFrame."""
+    return pd.DataFrame([
+        {
+            '지표': label,
+            '값': (fmt.format(value) if value is not None else '-'),
+            '업종 평균 대비': level or '-',
+            '신호': icon,
+        }
+        for label, value, fmt, level, icon in rows
+    ]).set_index('지표')
+
+
 def render_quant_scorecard():
     """OpenAI API 없이, 이미 이 대시보드가 계산 중인 지표(PER/업계PER·리스크
     지표·이동평균·DART 성장률)만으로 규칙 기반 판정을 내린다. 보유 종목 여부와
@@ -1864,15 +1915,21 @@ def render_quant_scorecard():
         revenue_yoy = _growth_pct(latest.get('revenue'), prev.get('revenue'))
         oi_yoy = _growth_pct(latest.get('operating_income'), prev.get('operating_income'))
 
-    pbr = None
+    industry_name = row.get('industry_name')
+    pbr = industry_pbr = None
     if market in ('KOSPI', 'KOSDAQ'):
         try:
             universe = fetch_per_universe(market)
             if not universe.empty and ticker in universe.index:
                 raw_pbr = universe.loc[ticker, 'PBR']
                 pbr = raw_pbr if raw_pbr and raw_pbr > 0 else None
+                if industry_name and '업종명' in universe.columns:
+                    peers = universe[
+                        (universe['업종명'] == industry_name) & (universe.index != ticker) & (universe['PBR'] > 0)
+                    ]
+                    industry_pbr = peers['PBR'].median() if not peers.empty else None
         except Exception:
-            pbr = None
+            pbr = industry_pbr = None
 
     try:
         ratios = fetch_dart_financial_ratios_cached(ticker)
@@ -1883,8 +1940,16 @@ def render_quant_scorecard():
     interest_coverage = ratios.get('interest_coverage')
     roe = ratios.get('roe')
     net_margin = ratios.get('net_margin')
+    asset_turnover_pct = ratios.get('asset_turnover')  # DART가 %로 줌(예: 30.245 = 0.30배)
+    asset_turnover = asset_turnover_pct / 100 if asset_turnover_pct is not None else None
+    roa = net_margin * asset_turnover_pct / 100 if net_margin is not None and asset_turnover_pct is not None else None
     psr = per * net_margin / 100 if per is not None and net_margin is not None and net_margin > 0 else None
     peg = per / oi_yoy if per is not None and oi_yoy is not None and oi_yoy > 0 else None
+
+    try:
+        quarterly_items, _ = fetch_dart_quarterly_financials_3y_cached(ticker)
+    except Exception:
+        quarterly_items = []
 
     try:
         cfo_list = fetch_dart_cashflow_cached(ticker)
@@ -1954,36 +2019,62 @@ def render_quant_scorecard():
             chart_items = annual_years[-5:]
             x_labels = [str(y['year']) for y in chart_items]
             st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
-            st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서')
+            st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서 (최근 5개년)')
+
+        if len(quarterly_items) >= 2:
+            st.divider()
+            q_x_labels = [f"{it['year']}년 {it['quarter']}분기" for it in quarterly_items]
+            st.altair_chart(_build_revenue_oi_chart(quarterly_items, q_x_labels), use_container_width=True)
+            st.caption('분기별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 분기/반기/사업보고서 (최근 3개년)')
 
     with tab_valuation:
-        v1, v2, v3 = st.columns(3)
-        v1.metric('PER', f'{per:.1f}배' if per is not None else '-')
-        v2.metric('업계 PER', f'{industry_per:.1f}배' if industry_per is not None else '-')
-        v3.metric('PBR', f'{pbr:.2f}배' if pbr is not None else '-')
-        v4, v5 = st.columns(2)
-        v4.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
-        v5.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
-        st.markdown(f'- {val_text}')
+        st.markdown('###### 밸류에이션 지표')
+        val_rows = [
+            ('PER (배)', per, '{:.1f}', *_peer_ratio_tier(per, industry_per, higher_is_better=False)),
+            ('PBR (배)', pbr, '{:.2f}', *_peer_ratio_tier(pbr, industry_pbr, higher_is_better=False)),
+        ]
+        st.dataframe(_build_indicator_table(val_rows), use_container_width=True)
         st.caption(
-            'PBR은 pykrx 시장 전체 조회(10분 캐시) · PSR=PER×순이익률, PEG=PER÷영업이익 YoY(이 페이지에서 계산). '
-            'PEG는 1보다 낮으면 성장성 대비 저평가로, 높으면 고평가로 보는 게 일반적인 해석입니다.'
+            f'업종: {industry_name or "-"} · "업종 평균 대비"는 pykrx 시장 전체 데이터에서 같은 업종 종목들의 '
+            'PER/PBR 중앙값과 비교한 실제 값입니다(0.8배 미만=하/저평가, 1.2배 초과=상/고평가). '
+            '✅=저평가 신호, ⚠️=업종 평균과 비슷, ❌=고평가 신호. 투자 조언이 아닙니다.'
+        )
+        st.divider()
+        p1, p2 = st.columns(2)
+        p1.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
+        p2.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
+        st.caption(
+            'PSR=PER×순이익률, PEG=PER÷영업이익 YoY(둘 다 이 페이지에서 계산) · '
+            'PEG는 1보다 낮으면 성장성 대비 저평가, 높으면 고평가로 보는 게 일반적인 해석입니다.'
         )
 
     with tab_stability:
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric('부채비율', f'{debt_ratio:.0f}%' if debt_ratio is not None else '-')
-        d2.metric('유동비율', f'{current_ratio:.0f}%' if current_ratio is not None else '-')
-        d3.metric(
-            '이자보상배율', f'{interest_coverage:.1f}배' if interest_coverage is not None else '-',
-            delta='위험' if interest_coverage is not None and interest_coverage < 1 else None,
-            delta_color='inverse',
-        )
-        d4.metric('ROE', f'{roe:.1f}%' if roe is not None else '-')
+        st.markdown('###### 안정성 지표')
+        stability_rows = [
+            ('부채비율 (%)', debt_ratio, '{:.0f}', *_tier_and_icon(debt_ratio, 100, 200, higher_is_better=False)),
+            ('유동비율 (%)', current_ratio, '{:.0f}', *_tier_and_icon(current_ratio, 100, 200, higher_is_better=True)),
+            (
+                '이자보상배율 (배)', interest_coverage, '{:.1f}',
+                *_tier_and_icon(interest_coverage, 1, 3, higher_is_better=True),
+            ),
+        ]
+        st.dataframe(_build_indicator_table(stability_rows), use_container_width=True)
         st.markdown(f'- {stability_text}')
+
+        st.divider()
+        st.markdown('###### 효율성 지표')
+        efficiency_rows = [
+            ('ROE (%)', roe, '{:.1f}', *_tier_and_icon(roe, 5, 15, higher_is_better=True)),
+            ('ROA (%)', roa, '{:.1f}', *_tier_and_icon(roa, 3, 8, higher_is_better=True)),
+            ('총자산회전율 (배)', asset_turnover, '{:.2f}', *_tier_and_icon(asset_turnover, 0.5, 1.5, higher_is_better=True)),
+        ]
+        st.dataframe(_build_indicator_table(efficiency_rows), use_container_width=True)
         st.caption(
-            '부채비율·유동비율·이자보상배율·ROE는 DART 사업보고서 재무지표(하루 캐시). '
-            '값이 없는 항목은 DART가 해당 종목·연도에 대해 그 지표를 계산해 공시하지 않은 경우입니다.'
+            '안정성·효율성 지표의 "업종 평균 대비"는 실제 동종업계 평균이 아니라(pykrx가 이 지표들은 시장 전체로 '
+            '제공하지 않음) 재무분석에서 흔히 쓰는 일반적 기준선입니다 — 부채비율 100%/200%, 유동비율 100%/200%, '
+            '이자보상배율 1배/3배, ROE 5%/15%, ROA 3%/8%, 총자산회전율 0.5배/1.5배를 "낮음/중간/높음" 경계로 삼았습니다. '
+            'ROA는 DART가 별도로 주지 않아 순이익률×총자산회전율로 근사 계산했고, 총자산회전율은 업종별 편차가 매우 커서 '
+            '이 기준선의 의미가 제한적입니다. 출처: DART 사업보고서 재무지표(하루 캐시).'
         )
 
         if len(cfo_list) >= 1:

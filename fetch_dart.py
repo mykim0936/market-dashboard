@@ -266,22 +266,27 @@ def fetch_quarterly_financials(corp_code, bsns_years):
 
 
 # "단일회사 주요 재무지표"(fnlttSinglIndx.json) 응답의 idx_nm -> 우리가 쓰는 키.
-# DART가 idx_cl_code=M220000(안정성)/M210000(수익성)로 나눠주는 지표 중 일부만 쓴다.
+# DART가 idx_cl_code=M220000(안정성)/M210000(수익성)/M240000(활동성)로 나눠주는
+# 지표 중 일부만 쓴다. ROA는 DART가 별도 항목으로 주지 않아, 호출부에서
+# 순이익률 × 총자산회전율로 듀폰 방식 근사치를 계산한다(asset_turnover는
+# DART가 %로 주는 값 — 예: 30.245는 회전율 0.30배라는 뜻).
 _RATIO_IDX_MAP = {
     '부채비율': 'debt_ratio', '유동비율': 'current_ratio',
     '이자보상배율': 'interest_coverage', 'ROE': 'roe', '순이익률': 'net_margin',
+    '총자산회전율': 'asset_turnover',
 }
 
 
 def fetch_financial_ratios(corp_code, bsns_year):
-    """부채비율·유동비율·이자보상배율·ROE·순이익률을 한 번에 조회한다(fnlttSinglIndx.json,
-    안정성/수익성 지표군 각 1회 호출). DART가 해당 종목·연도에 대해 값을 계산하지
-    못한 지표는 idx_val 자체가 없을 수 있어(예: 이자비용을 구분 공시하지 않는 회사의
-    이자보상배율) 그런 항목은 조용히 빠진다 — 호출부에서 없는 키는 "-"로 표시하면 된다.
-    반환: {'debt_ratio':, 'current_ratio':, 'interest_coverage':, 'roe':, 'net_margin':}
-    (일부 또는 전부 없을 수 있음, 완전 실패 시 빈 dict)."""
+    """부채비율·유동비율·이자보상배율·ROE·순이익률·총자산회전율을 한 번에 조회한다
+    (fnlttSinglIndx.json, 안정성/수익성/활동성 지표군 각 1회 호출). DART가 해당
+    종목·연도에 대해 값을 계산하지 못한 지표는 idx_val 자체가 없을 수 있어(예:
+    이자비용을 구분 공시하지 않는 회사의 이자보상배율) 그런 항목은 조용히 빠진다 —
+    호출부에서 없는 키는 "-"로 표시하면 된다.
+    반환: {'debt_ratio':, 'current_ratio':, 'interest_coverage':, 'roe':, 'net_margin':,
+    'asset_turnover':} (일부 또는 전부 없을 수 있음, 완전 실패 시 빈 dict)."""
     result = {}
-    for idx_cl_code in ('M220000', 'M210000'):
+    for idx_cl_code in ('M220000', 'M210000', 'M240000'):
         rows = _get('fnlttSinglIndx.json', {
             'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011',
             'idx_cl_code': idx_cl_code,
