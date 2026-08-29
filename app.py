@@ -436,6 +436,45 @@ def get_investor_flow_df():
     return df
 
 
+# 포트폴리오 성과 추이에서 고를 수 있는 기간 — RS_PERIODS와 같은 규칙.
+PORTFOLIO_PERF_PERIODS = {
+    '1개월': lambda now: now - pd.DateOffset(months=1),
+    '3개월': lambda now: now - pd.DateOffset(months=3),
+    '6개월': lambda now: now - pd.DateOffset(months=6),
+    'YTD': lambda now: pd.Timestamp(year=now.year, month=1, day=1),
+    '1년': lambda now: now - pd.DateOffset(years=1),
+}
+
+
+@st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
+def fetch_portfolio_value_series(holdings_key, start_dt):
+    """보유 종목들의 일별 평가금액 합계 시계열을 만든다. holdings_key는
+    ((ticker, quantity), ...) 튜플 — st.cache_data가 해시할 수 있어야 해서
+    DataFrame 대신 튜플로 받는다.
+
+    주의: 지금 보유 중인 수량을 과거에도 그대로 들고 있었다고 가정한 역산이다
+    (실제 매매 이력이 없어서 진짜 계좌 잔고 추이가 아니다). 상장이 늦은 종목이
+    섞여 있으면 그 종목의 데이터가 없는 구간은 통째로 빼서(dropna) 합계가 갑자기
+    뛰는 착시를 막는다 — 그래서 실제 시작일이 요청한 기간보다 늦을 수 있고,
+    호출부에서 그 시작일을 캡션에 밝힌다."""
+    series = {}
+    for ticker, qty in holdings_key:
+        try:
+            df = fetch_stock_series(ticker, start_dt)
+        except Exception:
+            continue
+        if df is not None and not df.empty and 'Close' in df.columns:
+            series[ticker] = df['Close'] * qty
+    if not series:
+        return pd.Series(dtype=float)
+    # ffill은 종목별 휴장/결측일을 메우고, dropna는 아직 상장 전이라 값 자체가
+    # 없는 앞 구간을 잘라낸다.
+    combined = pd.DataFrame(series).ffill().dropna()
+    if combined.empty:
+        return pd.Series(dtype=float)
+    return combined.sum(axis=1)
+
+
 def get_holdings_from_secrets():
     """클라우드 배포본용 — portfolio.csv(개인정보라 저장소에 커밋하지 않음) 대신
     Streamlit Secrets 의 [[portfolio]] 배열에서 보유 종목을 읽는다.
@@ -467,6 +506,29 @@ PER_LOOKBACK_DAYS = 5
 
 # DART(전자공시) 데이터는 분기/연 단위로만 바뀌므로 하루 단위로 길게 캐시한다.
 DART_TTL_SEC = 24 * 60 * 60
+
+# 업종별 등락 패널 기본 기간(일). 시장 전체 조회라 PER과 같은 캐시 주기를 쓴다.
+SECTOR_PERF_DAYS = 7
+
+
+@st.cache_data(ttl=PER_TTL_SEC)
+def fetch_sector_performance(market, days):
+    """market('KOSPI'/'KOSDAQ') 업종 지수의 기간 등락률(%)을 내림차순 Series로
+    반환한다(업종명 -> 등락률). pykrx가 같은 응답에 시장 전체("코스피")와
+    "코스피 200 정보기술" 같은 파생 지수까지 섞어 주므로, 시장 이름으로 시작하는
+    항목을 빼서 순수 업종 지수만 남긴다. 조회 실패 시 빈 Series."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=days)
+    try:
+        df = pykrx_stock.get_index_price_change(
+            start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), market)
+    except Exception:
+        return pd.Series(dtype=float)
+    if df.empty or '등락률' not in df.columns:
+        return pd.Series(dtype=float)
+    prefix = '코스피' if market == 'KOSPI' else '코스닥'
+    sectors = df[~df.index.str.startswith(prefix)]
+    return sectors['등락률'].sort_values(ascending=False)
 
 
 @st.cache_data(ttl=CACHE_TTL_SEC)
@@ -840,6 +902,7 @@ def attach_per_columns(stocks):
 
 # MDD·52주 위치·거래량 배율 계산에 넉넉한 버퍼를 두고 최근 400일치를 받는다
 # (52주=약 252거래일 + 거래량 20일 평균 계산 여유분).
+SECTOR_CONCENTRATION_WARN_PCT = 50  # 한 업종이 이 비중을 넘으면 업종 쏠림으로 경고
 RISK_LOOKBACK_DAYS = 400
 VOLUME_SURGE_RATIO = 2.0  # 20일 평균 대비 이 배수 이상이면 "급증"으로 표시
 
@@ -1060,6 +1123,60 @@ def render_investor_flow_panel():
     )
 
 
+def render_sector_panel():
+    """업종별 등락 — 최근 한 주 동안 어느 업종이 오르고 내렸는지 가로 막대로 본다.
+    지수 카드(코스피/코스닥 전체)만으로는 "시장이 왜 움직였는지"를 알 수 없어서,
+    업종 단위로 쪼개 자금이 어디로 몰렸는지 한눈에 보게 하는 패널이다."""
+    st.subheader(f'업종별 등락 (최근 {SECTOR_PERF_DAYS}일)')
+
+    market_label = st.radio(
+        '시장', ['코스피', '코스닥'], horizontal=True, key='sector_market', label_visibility='collapsed',
+    )
+    market = 'KOSPI' if market_label == '코스피' else 'KOSDAQ'
+
+    try:
+        sectors = fetch_sector_performance(market, SECTOR_PERF_DAYS)
+    except Exception as e:
+        st.warning(f'업종별 등락을 불러오지 못했습니다: {e}')
+        return
+    if sectors.empty:
+        st.info('업종별 등락 데이터를 불러오지 못했습니다.')
+        return
+
+    chart_df = sectors.reset_index()
+    chart_df.columns = ['업종', '등락률(%)']
+    chart = (
+        alt.Chart(chart_df)
+        .mark_bar()
+        .encode(
+            x=alt.X('등락률(%):Q', title='등락률(%)'),
+            y=alt.Y('업종:N', title=None, sort=chart_df['업종'].tolist()),
+            # 한국 시장 관행대로 상승은 빨강, 하락은 파랑.
+            color=alt.condition(alt.datum['등락률(%)'] >= 0, alt.value(UP_COLOR), alt.value(DOWN_COLOR)),
+            tooltip=[alt.Tooltip('업종:N'), alt.Tooltip('등락률(%):Q', format='+.2f')],
+        )
+        .properties(height=max(320, 22 * len(chart_df)))
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    top = chart_df.head(3)
+    bottom = chart_df.tail(3).iloc[::-1]
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown('**가장 많이 오른 업종**')
+        for _, r in top.iterrows():
+            st.markdown(f"- {r['업종']} `{r['등락률(%)']:+.2f}%`")
+    with c2:
+        st.markdown('**가장 많이 내린 업종**')
+        for _, r in bottom.iterrows():
+            st.markdown(f"- {r['업종']} `{r['등락률(%)']:+.2f}%`")
+
+    st.caption(
+        f'{market_label} 업종 지수의 최근 {SECTOR_PERF_DAYS}일 등락률 · 빨강=상승, 파랑=하락 · '
+        '출처: pykrx (KRX 업종 지수)'
+    )
+
+
 def style_portfolio(df):
     """손익 관련 컬럼만 상승 빨강 / 하락 파랑으로 칠한다."""
     signed_cols = ['전일대비(%)', '평가손익', '수익률(%)']
@@ -1163,6 +1280,226 @@ def render_portfolio_panel():
         '오늘 현재가를 나눈 값 (순손실 종목은 산정 불가로 "-")\n'
         '- **업계 PER** — pykrx 기준 같은 시장(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값 (적자 종목 제외)\n'
         '- **ETF (Exchange Traded Fund, 상장지수펀드)**·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다'
+    )
+
+    st.divider()
+    render_portfolio_breakdown(stocks)
+
+
+def render_portfolio_breakdown(stocks):
+    """보유 종목 표만으로는 "누가 손익을 만들었나 / 어디에 쏠려 있나"가 한눈에 안
+    들어와서, 종목별 손익 기여도와 업종별 비중을 막대로 함께 보여준다.
+    stocks는 render_portfolio_panel이 이미 attach_per_columns까지 끝낸 DataFrame —
+    업종(industry_name)을 다시 조회하지 않으려고 그대로 넘겨받는다."""
+    st.markdown('###### 손익 기여도 · 비중 분석')
+    col_pl, col_sector = st.columns(2)
+
+    with col_pl:
+        pl_df = pd.DataFrame({
+            '종목명': stocks['name'],
+            '평가손익': pd.to_numeric(stocks['profit'], errors='coerce'),
+        }).dropna().sort_values('평가손익')
+        if pl_df.empty:
+            st.info('손익 기여도를 계산할 데이터가 없습니다.')
+        else:
+            pl_chart = (
+                alt.Chart(pl_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X('평가손익:Q', title='평가손익(원)'),
+                    y=alt.Y('종목명:N', title=None, sort=pl_df['종목명'].tolist()),
+                    color=alt.condition(alt.datum['평가손익'] >= 0, alt.value(UP_COLOR), alt.value(DOWN_COLOR)),
+                    tooltip=[alt.Tooltip('종목명:N'), alt.Tooltip('평가손익:Q', format=',.0f')],
+                )
+                .properties(height=max(240, 30 * len(pl_df)))
+            )
+            st.altair_chart(pl_chart, use_container_width=True)
+            worst = pl_df.iloc[0]
+            best = pl_df.iloc[-1]
+            st.caption(
+                f"손익 기여 1위: {best['종목명']} ({best['평가손익']:+,.0f}원) · "
+                f"손실 기여 1위: {worst['종목명']} ({worst['평가손익']:+,.0f}원)"
+            )
+
+    with col_sector:
+        sector_src = stocks.copy()
+        # ETF·시장 구분이 없는 종목은 업종이 비어 있어(pykrx 업종 분류 대상이 아님)
+        # 그냥 빼면 합계가 100%가 안 되므로 별도 항목으로 묶는다.
+        sector_src['업종'] = sector_src['industry_name'].fillna('ETF·기타').replace('', 'ETF·기타')
+        sector_df = (
+            sector_src.groupby('업종')['eval_amount'].sum().reset_index()
+            .sort_values('eval_amount', ascending=False)
+        )
+        total_eval = sector_df['eval_amount'].sum()
+        if not total_eval:
+            st.info('업종별 비중을 계산할 데이터가 없습니다.')
+        else:
+            sector_df['비중(%)'] = sector_df['eval_amount'] / total_eval * 100
+            sector_chart = (
+                alt.Chart(sector_df)
+                .mark_bar(color=SWISS_GREEN)
+                .encode(
+                    x=alt.X('비중(%):Q', title='비중(%)'),
+                    y=alt.Y('업종:N', title=None, sort=sector_df['업종'].tolist()),
+                    tooltip=[
+                        alt.Tooltip('업종:N'), alt.Tooltip('비중(%):Q', format='.1f'),
+                        alt.Tooltip('eval_amount:Q', title='평가금액', format=',.0f'),
+                    ],
+                )
+                .properties(height=max(240, 30 * len(sector_df)))
+            )
+            st.altair_chart(sector_chart, use_container_width=True)
+            top_sector = sector_df.iloc[0]
+            st.caption(
+                f"최대 비중 업종: {top_sector['업종']} ({top_sector['비중(%)']:.1f}%) · "
+                f'업종 수 {len(sector_df)}개 · 현금 제외 주식 평가금액 대비'
+            )
+
+    # 업종 쏠림은 종목 쏠림과 별개다 — 서로 다른 종목에 나눠 담았어도 같은 업종이면
+    # 악재가 왔을 때 한꺼번에 빠진다. 종목 단위 집중도 경고(보유 종목 현황)가
+    # 놓치는 위험이라 여기서 따로 알린다.
+    if not stocks.empty:
+        sector_weights = (
+            stocks.assign(업종=stocks['industry_name'].fillna('ETF·기타').replace('', 'ETF·기타'))
+            .groupby('업종')['eval_amount'].sum()
+        )
+        sector_total = sector_weights.sum()
+        if sector_total:
+            top_pct = sector_weights.max() / sector_total * 100
+            top_name = sector_weights.idxmax()
+            if top_pct >= SECTOR_CONCENTRATION_WARN_PCT and top_name != 'ETF·기타':
+                st.warning(
+                    f'업종 집중도 경고: **{top_name}** 업종이 주식 평가금액의 {top_pct:.1f}%를 차지합니다. '
+                    '종목은 나눠 담았어도 같은 업종이면 업황 악재에 함께 하락하는 경향이 있어, '
+                    '종목 분산만으로는 위험이 줄지 않습니다.'
+                )
+
+    st.markdown(
+        '- **손익 기여도** — 종목별 평가손익(평가금액 − 매입금액). 빨강=이익, 파랑=손실\n'
+        '- **업종별 비중** — 같은 업종 종목들의 평가금액을 합쳐 계산 (pykrx 업종 분류 기준)\n'
+        '- 한 업종 비중이 과하게 크면 그 업종에 악재가 왔을 때 계좌 전체가 함께 흔들립니다'
+    )
+
+
+def render_portfolio_performance():
+    """계좌 평가금액이 시간에 따라 어떻게 움직였는지, 그리고 그게 시장(코스피)보다
+    나았는지를 함께 본다. 보유 종목 표는 "지금 이 순간"만 보여주기 때문에 추세와
+    벤치마크 대비 성과가 빠져 있었다.
+
+    한계: 실제 매매 이력(언제 얼마에 사고팔았는지)이 없어서, 지금 보유 중인 수량을
+    과거에도 그대로 들고 있었다고 가정한 역산이다 — 실제 계좌 잔고 추이와는 다르며
+    캡션에 그 사실을 밝힌다."""
+    st.subheader('포트폴리오 성과 추이')
+
+    portfolio_df = get_portfolio_df()
+    if portfolio_df is None or portfolio_df.empty:
+        st.info('보유 종목이 없어 성과 추이를 볼 수 없습니다.')
+        return
+    stocks = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
+    if stocks.empty:
+        st.info('보유 종목이 없어 성과 추이를 볼 수 없습니다.')
+        return
+
+    col_period, col_bench = st.columns(2)
+    with col_period:
+        period_label = st.selectbox(
+            '기간', list(PORTFOLIO_PERF_PERIODS), index=2, key='perf_period')
+    with col_bench:
+        bench_label = st.selectbox('비교 지수', list(RS_BENCHMARKS), key='perf_benchmark')
+
+    now = pd.Timestamp.now()
+    start_dt = PORTFOLIO_PERF_PERIODS[period_label](now)
+    holdings_key = tuple((str(r['ticker']), float(r['quantity'])) for _, r in stocks.iterrows())
+
+    try:
+        with st.spinner('포트폴리오 성과 계산 중...'):
+            value_series = fetch_portfolio_value_series(holdings_key, start_dt)
+    except Exception as e:
+        st.warning(f'성과 추이를 계산하지 못했습니다: {e}')
+        return
+    if value_series.empty or len(value_series) < 2:
+        st.info('성과를 계산할 만큼 주가 데이터가 충분하지 않습니다.')
+        return
+
+    bench_source, bench_code = RS_BENCHMARKS[bench_label]
+    try:
+        bench_df, _ = load_series_live(bench_source, bench_code, start_dt)
+    except Exception:
+        bench_df = pd.DataFrame()
+
+    port_norm = value_series / value_series.iloc[0] * 100
+    rows = [{'날짜': d, '구분': '내 포트폴리오', '지수(시작=100)': v} for d, v in port_norm.items()]
+
+    bench_return = None
+    if not bench_df.empty and 'Close' in bench_df.columns:
+        bench_close = bench_df['Close']
+        bench_close = bench_close[bench_close.index >= port_norm.index[0]]
+        if len(bench_close) >= 2:
+            bench_norm = bench_close / bench_close.iloc[0] * 100
+            bench_return = bench_norm.iloc[-1] - 100
+            rows += [{'날짜': d, '구분': bench_label, '지수(시작=100)': v} for d, v in bench_norm.items()]
+
+    port_return = port_norm.iloc[-1] - 100
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric('내 포트폴리오', f'{port_return:+.2f}%')
+    m2.metric(f'{bench_label}', f'{bench_return:+.2f}%' if bench_return is not None else '-')
+    if bench_return is not None:
+        diff = port_return - bench_return
+        m3.metric('상대 성과', f'{diff:+.2f}%p',
+                  delta='시장보다 우수' if diff > 0 else ('시장보다 부진' if diff < 0 else '동일'),
+                  delta_color='off')
+    else:
+        m3.metric('상대 성과', '-')
+
+    chart = (
+        alt.Chart(pd.DataFrame(rows))
+        .mark_line()
+        .encode(
+            x=alt.X('날짜:T', title=None),
+            y=alt.Y('지수(시작=100):Q', title='시작일=100', scale=alt.Scale(zero=False)),
+            color=alt.Color(
+                '구분:N', title=None,
+                scale=alt.Scale(domain=['내 포트폴리오', bench_label], range=[SWISS_GREEN, SWISS_GRAY]),
+            ),
+            tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('구분:N'),
+                     alt.Tooltip('지수(시작=100):Q', format=',.1f')],
+        )
+        .properties(height=340)
+        .interactive()
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+    # 계좌 전체 리스크 — 종목별 MDD는 "종목 분석" 탭에 있지만 계좌를 합쳤을 때의
+    # 낙폭/변동성은 어디에도 없었다. 위에서 이미 받아온 시계열로만 계산해 추가
+    # API 호출이 없다.
+    daily_returns = value_series.pct_change().dropna()
+    running_max = value_series.cummax()
+    drawdown = (value_series / running_max - 1) * 100
+    max_drawdown = drawdown.min()
+    trough_date = drawdown.idxmin()
+    # 거래일 기준 연율화(1년 ≈ 252거래일) — 일간 변동성을 연 단위로 환산한 관행적 표기.
+    annual_vol = daily_returns.std() * (252 ** 0.5) * 100 if len(daily_returns) > 1 else None
+
+    r1, r2, r3 = st.columns(3)
+    r1.metric('기간 내 최대 낙폭(MDD)', f'{max_drawdown:.2f}%')
+    r2.metric('연환산 변동성', f'{annual_vol:.1f}%' if annual_vol is not None else '-')
+    r3.metric('현재 고점 대비', f'{drawdown.iloc[-1]:.2f}%')
+    trough_str = trough_date.strftime('%Y-%m-%d') if hasattr(trough_date, 'strftime') else str(trough_date)
+    st.caption(
+        f'최대 낙폭은 {trough_str}에 기록 · '
+        'MDD = 기간 중 고점 대비 가장 크게 빠졌던 폭, 연환산 변동성 = 일간 등락폭을 1년 기준으로 환산한 값 '
+        '(클수록 가격이 심하게 출렁인다는 뜻)'
+    )
+
+    actual_start = port_norm.index[0]
+    start_str = actual_start.strftime('%Y-%m-%d') if hasattr(actual_start, 'strftime') else str(actual_start)
+    st.markdown(
+        f'- 두 선 모두 **{start_str}을 100으로 맞춰** 같은 출발선에서 비교합니다 — 위로 더 간 쪽이 더 많이 오른 것\n'
+        '- **⚠️ 지금 보유 중인 수량을 과거에도 그대로 들고 있었다고 가정한 역산입니다** — '
+        '실제 매매 이력(추가매수·매도 시점)이 없어서 진짜 계좌 잔고 추이와는 다릅니다\n'
+        '- 상장이 늦은 종목이 있으면 그 종목 데이터가 생긴 날부터 계산해서, 선택한 기간보다 시작일이 늦을 수 있습니다\n'
+        '- 출처: FinanceDataReader(보유 종목) · pykrx/yfinance(비교 지수)'
     )
 
 
@@ -2497,6 +2834,8 @@ def render_market_live():
     render_macro_panel()
     st.divider()
     render_investor_flow_panel()
+    st.divider()
+    render_sector_panel()
 
 
 def render_portfolio_live():
@@ -2539,6 +2878,9 @@ def main():
 
     with tab_portfolio:
         st.fragment(run_every=interval)(render_portfolio_live)()
+        st.divider()
+        # 기간/지수를 고르는 상호작용 패널이라 자동 새로고침 대상이 아니다.
+        render_portfolio_performance()
         st.divider()
         # 종목마다 여러 DART 조회가 필요해 무거워 자동 새로고침 대상이 아니다.
         render_concentration_check()
