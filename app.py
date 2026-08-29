@@ -546,6 +546,26 @@ def fetch_dart_financial_ratios_cached(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_financial_ratios_5y_cached(ticker):
+    """정량 스코어카드의 "밸류에이션·재무 안정성" 5개년 추이 표용 — 최근 5개
+    사업연도까지 각각 부채비율/유동비율/이자보상배율/ROE/순이익률/총자산회전율을
+    조회한다(연도당 fnlttSinglIndx.json 3회). 반환: {연도: ratios_dict} — 아직
+    사업보고서가 안 나온 연도는 빠진다."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return {}
+    this_year = datetime.now().year
+    result = {}
+    for bsns_year in range(this_year - 1, this_year - 7, -1):
+        ratios = fetch_dart.fetch_financial_ratios(corp_code, str(bsns_year))
+        if ratios:
+            result[bsns_year] = ratios
+        if len(result) >= 5:
+            break
+    return result
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_cashflow_cached(ticker):
     """정량 스코어카드의 "이익의 질" 카드용 — 최근 3개년 영업활동현금흐름(억원)."""
     corp_code = fetch_dart_corp_map().get(ticker)
@@ -1275,8 +1295,9 @@ def render_concentration_check():
 
 
 def _build_revenue_oi_chart(items, x_labels):
-    """매출액·영업이익은 그룹 막대(회색/초록), 영업이익률은 흰색 꺾은선(보조축)으로
-    겹쳐 그린다. items는 x_labels와 순서가 1:1로 대응하는 {'revenue':, 'operating_income':} 리스트."""
+    """매출액·영업이익은 그룹 막대, 영업이익률은 꺾은선(보조축)으로 겹쳐 그린다.
+    셋 다 같은 색상 스케일을 공유해서 범례 하나에 다 같이 뜬다. items는
+    x_labels와 순서가 1:1로 대응하는 {'revenue':, 'operating_income':} 리스트."""
     bar_rows, margin_rows = [], []
     for label, it in zip(x_labels, items):
         revenue = it.get('revenue')
@@ -1286,7 +1307,10 @@ def _build_revenue_oi_chart(items, x_labels):
         if op_income is not None:
             bar_rows.append({'구간': label, '항목': '영업이익', '금액(억원)': op_income})
         if revenue and op_income is not None:
-            margin_rows.append({'구간': label, '영업이익률(%)': op_income / revenue * 100})
+            margin_rows.append({'구간': label, '항목': '영업이익률(%)', '영업이익률(%)': op_income / revenue * 100})
+
+    color_scale = alt.Scale(domain=['매출액', '영업이익', '영업이익률(%)'], range=[SWISS_GRAY, SWISS_GREEN, SWISS_WHITE])
+    legend = alt.Legend(title=None)
 
     bars = (
         alt.Chart(pd.DataFrame(bar_rows))
@@ -1295,19 +1319,17 @@ def _build_revenue_oi_chart(items, x_labels):
             x=alt.X('구간:N', title=None, sort=x_labels),
             xOffset=alt.XOffset('항목:N'),
             y=alt.Y('금액(억원):Q', title='억원'),
-            color=alt.Color(
-                '항목:N', title=None,
-                scale=alt.Scale(domain=['매출액', '영업이익'], range=[SWISS_GRAY, SWISS_GREEN]),
-            ),
+            color=alt.Color('항목:N', scale=color_scale, legend=legend),
             tooltip=[alt.Tooltip('구간:N'), alt.Tooltip('항목:N'), alt.Tooltip('금액(억원):Q', format=',.1f')],
         )
     )
     line = (
         alt.Chart(pd.DataFrame(margin_rows))
-        .mark_line(color=SWISS_WHITE, point=True)
+        .mark_line(point=True)
         .encode(
             x=alt.X('구간:N', title=None, sort=x_labels),
             y=alt.Y('영업이익률(%):Q', title='영업이익률(%)'),
+            color=alt.Color('항목:N', scale=color_scale, legend=legend),
             tooltip=[alt.Tooltip('구간:N'), alt.Tooltip('영업이익률(%):Q', format='+.1f')],
         )
     )
@@ -1356,6 +1378,8 @@ def _render_growth_metrics(items, period_type):
         '분기별 QoQ는 계절성이 큰 업종에서는 왜곡될 수 있어 YoY와 함께 봅니다.'
     )
 
+
+PRICE_5Y_LOOKBACK_DAYS = 5 * 365  # 정량 스코어카드 "개요" 탭 맨 아래 5년 주가 흐름 차트용
 
 MA_WINDOWS = (20, 60, 120)
 MA_LOOKBACK_DAYS = 420  # 120일 이동평균이 초반부터 안정되도록 넉넉히 받고, 표시는 최근 180거래일만
@@ -1418,34 +1442,42 @@ def _render_moving_average_section(ticker, selected_name):
     date_col = display_df.columns[0]
     display_df = display_df.rename(columns={date_col: 'Date', 'Close': '주가'})
 
-    ma_colors = {'MA20': SWISS_GREEN, 'MA60': SWISS_GRAY, 'MA120': SWISS_GRAY}
     ma_dash = {'MA20': [1, 0], 'MA60': [1, 0], 'MA120': [5, 3]}
+    ma_labels = {'MA20': '20일선', 'MA60': '60일선', 'MA120': '120일선'}
+    series_order = ['주가', '20일선', '60일선', '120일선', '볼린저 상단', '볼린저 하단']
+    series_colors = [SWISS_WHITE, SWISS_GREEN, SWISS_GRAY, SWISS_GRAY, SWISS_GRAY, SWISS_GRAY]
+    color_scale = alt.Scale(domain=series_order, range=series_colors)
+    legend = alt.Legend(title=None)
 
     price_line = (
-        alt.Chart(display_df)
-        .mark_line(color=SWISS_WHITE)
+        alt.Chart(display_df.assign(구분='주가'))
+        .mark_line()
         .encode(
             x=alt.X('Date:T', title=None),
             y=alt.Y('주가:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+            color=alt.Color('구분:N', scale=color_scale, legend=legend),
             tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('주가:Q', title='주가', format=',.0f')],
         )
     )
     ma_lines = [
-        alt.Chart(display_df)
-        .mark_line(color=ma_colors[f'MA{w}'], strokeDash=ma_dash[f'MA{w}'])
+        alt.Chart(display_df.assign(구분=ma_labels[f'MA{w}']))
+        .mark_line(strokeDash=ma_dash[f'MA{w}'])
         .encode(
             x=alt.X('Date:T', title=None),
             y=alt.Y(f'MA{w}:Q', title=None),
+            color=alt.Color('구분:N', scale=color_scale, legend=legend),
             tooltip=[alt.Tooltip('Date:T'), alt.Tooltip(f'MA{w}:Q', title=f'{w}일선', format=',.0f')],
         )
         for w in MA_WINDOWS
     ]
+    bb_labels = {'BB상단': '볼린저 상단', 'BB하단': '볼린저 하단'}
     bb_lines = [
-        alt.Chart(display_df)
-        .mark_line(color=SWISS_GRAY, strokeDash=[2, 2], opacity=0.6)
+        alt.Chart(display_df.assign(구분=bb_labels[label]))
+        .mark_line(strokeDash=[2, 2], opacity=0.6)
         .encode(
             x=alt.X('Date:T', title=None),
             y=alt.Y(f'{label}:Q', title=None),
+            color=alt.Color('구분:N', scale=color_scale, legend=legend),
             tooltip=[alt.Tooltip('Date:T'), alt.Tooltip(f'{label}:Q', title=f'볼린저밴드 {label}', format=',.0f')],
         )
         for label in ('BB상단', 'BB하단')
@@ -1456,8 +1488,7 @@ def _render_moving_average_section(ticker, selected_name):
     with ma_chart_col:
         st.altair_chart(chart, use_container_width=True)
     st.caption(
-        f'{selected_name} 주가(흰색)와 20일선(초록 실선)·60일선(회색 실선)·120일선'
-        '(회색 점선)·볼린저밴드 상하단(회색 점선, 20일선 ± 2표준편차). 최근 180거래일만 '
+        f'{selected_name} 주가와 이동평균선·볼린저밴드(20일선 ± 2표준편차). 최근 180거래일만 '
         '표시하되, 지표 자체는 그 이전 데이터까지 포함해 계산합니다.'
     )
 
@@ -1504,25 +1535,30 @@ def _render_moving_average_section(ticker, selected_name):
         if macd_chart_df.empty:
             st.info('MACD를 계산할 만큼 데이터가 충분하지 않습니다.')
         else:
+            macd_scale = alt.Scale(domain=['MACD', '시그널', '히스토그램'], range=[SWISS_GREEN, SWISS_WHITE, SWISS_GRAY])
+            macd_legend = alt.Legend(title=None)
             macd_bar = (
-                alt.Chart(macd_chart_df)
-                .mark_bar(color=SWISS_GRAY, opacity=0.5)
+                alt.Chart(macd_chart_df.assign(구분='히스토그램'))
+                .mark_bar(opacity=0.5)
                 .encode(
                     x=alt.X('Date:T', title=None),
                     y=alt.Y('MACD_hist:Q', title=None),
+                    color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
                     tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_hist:Q', title='히스토그램', format=',.0f')],
                 )
             )
             macd_line = (
-                alt.Chart(macd_chart_df)
-                .mark_line(color=SWISS_GREEN)
+                alt.Chart(macd_chart_df.assign(구분='MACD'))
+                .mark_line()
                 .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD:Q', title=None),
+                        color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
                         tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD:Q', format=',.0f')])
             )
             signal_line = (
-                alt.Chart(macd_chart_df)
-                .mark_line(color=SWISS_WHITE, strokeDash=[3, 2])
+                alt.Chart(macd_chart_df.assign(구분='시그널'))
+                .mark_line(strokeDash=[3, 2])
                 .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD_signal:Q', title=None),
+                        color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
                         tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_signal:Q', title='시그널', format=',.0f')])
             )
             st.altair_chart(
@@ -1531,7 +1567,7 @@ def _render_moving_average_section(ticker, selected_name):
             latest = macd_chart_df.iloc[-1]
             cross_label = 'MACD가 시그널선 위 (상승 모멘텀)' if latest['MACD'] >= latest['MACD_signal'] else 'MACD가 시그널선 아래 (하락 모멘텀)'
             st.metric('MACD − 시그널', f"{latest['MACD_hist']:+,.0f}", delta_color='off')
-            st.caption(f'{cross_label} · 초록선=MACD, 흰 점선=시그널선, 막대=둘의 차이(히스토그램).')
+            st.caption(cross_label)
 
 
 def render_stock_detail_panel():
@@ -1610,10 +1646,7 @@ def render_stock_detail_panel():
         st.altair_chart(_build_revenue_oi_chart(items, x_labels), use_container_width=True)
 
         partial_notes = [f"{it['year']}년: {it['partial']}" for it in items if it.get('partial')]
-        caption = (
-            f'출처: {source_note} · {fs_div or ""} · '
-            '매출액·영업이익(막대, 왼쪽 축) / 영업이익률(흰 선, 오른쪽 축)'
-        )
+        caption = f'출처: {source_note} · {fs_div or ""} · 매출액·영업이익은 왼쪽 축, 영업이익률은 오른쪽 축입니다.'
         if partial_notes:
             caption += ' · 부분 실적 ' + ', '.join(partial_notes)
         st.caption(caption)
@@ -1643,21 +1676,25 @@ def render_stock_detail_panel():
                         for y in chart_years
                     ])
 
+                    combo_scale = alt.Scale(domain=['주가', '영업이익'], range=[NEUTRAL_CHART_COLOR, SWISS_GREEN])
+                    combo_legend = alt.Legend(title=None)
                     price_chart = (
-                        alt.Chart(price_line)
-                        .mark_line(color=NEUTRAL_CHART_COLOR)
+                        alt.Chart(price_line.assign(구분='주가'))
+                        .mark_line()
                         .encode(
                             x=alt.X('Date:T', title=None),
                             y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+                            color=alt.Color('구분:N', scale=combo_scale, legend=combo_legend),
                             tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
                         )
                     )
                     oi_chart = (
-                        alt.Chart(oi_df)
-                        .mark_line(color=SWISS_GREEN, point=True)
+                        alt.Chart(oi_df.assign(구분='영업이익'))
+                        .mark_line(point=True)
                         .encode(
                             x=alt.X('Date:T', title=None),
                             y=alt.Y('영업이익:Q', title='영업이익(억원)', scale=alt.Scale(zero=False)),
+                            color=alt.Color('구분:N', scale=combo_scale, legend=combo_legend),
                             tooltip=[alt.Tooltip('Date:T', title='연도'), alt.Tooltip('영업이익:Q', format=',.1f')],
                         )
                     )
@@ -1669,7 +1706,7 @@ def render_stock_detail_panel():
                     )
                     st.altair_chart(combo, use_container_width=True)
                     st.caption(
-                        f'{selected_name} 주가(흰색, 왼쪽 축)와 연간 영업이익(초록, 오른쪽 축 · 각 연말 시점에 표시) '
+                        f'{selected_name} 주가(왼쪽 축)와 연간 영업이익(오른쪽 축 · 각 연말 시점에 표시) '
                         f'— {chart_years[0]["year"]}~{chart_years[-1]["year"]}년. 두 값의 단위가 달라(원 vs 억원) '
                         '지수화 대신 서로 다른 축으로 함께 표시했습니다.'
                     )
@@ -1820,46 +1857,6 @@ def render_rs_tab():
         st.warning(f'RS를 계산하지 못했습니다: {e}')
 
 
-def _valuation_signal(per, industry_per):
-    """PER을 업계 PER과 비교해 (점수, 설명) 반환. 점수는 -1(고평가)~+1(저평가)."""
-    if per is None or not industry_per or industry_per <= 0:
-        return 0, '➖ 밸류에이션: PER 데이터가 부족해 판단할 수 없습니다.'
-    ratio = per / industry_per
-    if ratio < 0.8:
-        return 1, f'✅ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배) 대비 낮습니다 — 저평가 신호.'
-    if ratio > 1.2:
-        return -1, f'⚠️ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배) 대비 높습니다 — 고평가 신호.'
-    return 0, f'➖ 밸류에이션: PER {per:.1f}배로 업계 평균({industry_per:.1f}배)과 비슷한 수준입니다.'
-
-
-def _position_signal(pos_52w):
-    if pos_52w is None:
-        return 0, '➖ 위치: 52주 데이터가 부족해 판단할 수 없습니다.'
-    if pos_52w >= 80:
-        return -1, f'⚠️ 위치: 52주 구간의 상위 {100 - pos_52w:.0f}% 지점(고점권)입니다 — 추격 매수에 주의하세요.'
-    if pos_52w <= 20:
-        return 1, f'✅ 위치: 52주 구간의 하위 {pos_52w:.0f}% 지점(저점권)입니다.'
-    return 0, f'➖ 위치: 52주 구간의 {pos_52w:.0f}% 지점으로 중립적입니다.'
-
-
-def _trend_signal(gap20, gap60):
-    if gap20 is None or gap60 is None:
-        return 0, '➖ 추세: 이동평균 데이터가 부족해 판단할 수 없습니다.'
-    if gap20 > 0 and gap60 > 0:
-        return 1, f'✅ 추세: 20일선({gap20:+.1f}%)·60일선({gap60:+.1f}%) 모두 위 — 단기 정배열입니다.'
-    if gap20 < 0 and gap60 < 0:
-        return -1, f'⚠️ 추세: 20일선({gap20:+.1f}%)·60일선({gap60:+.1f}%) 모두 아래 — 단기 역배열입니다.'
-    return 0, f'➖ 추세: 20일선 이격도 {gap20:+.1f}%, 60일선 이격도 {gap60:+.1f}% — 혼조세입니다.'
-
-
-def _growth_signal(revenue_yoy, oi_yoy):
-    if revenue_yoy is None or oi_yoy is None:
-        return 0, '➖ 성장성: DART 재무 데이터가 부족해 판단할 수 없습니다.'
-    if revenue_yoy > 0 and oi_yoy > 0:
-        return 1, f'✅ 성장성: 최근 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 동반 성장 중입니다.'
-    if revenue_yoy < 0 and oi_yoy < 0:
-        return -1, f'⚠️ 성장성: 최근 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 동반 역성장 중입니다.'
-    return 0, f'➖ 성장성: 매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}% — 방향이 엇갈립니다.'
 
 
 def _stability_signal(debt_ratio, interest_coverage):
@@ -1930,10 +1927,45 @@ def _build_indicator_table(rows):
     ]).set_index('지표')
 
 
+def _build_multi_year_ratio_table(ratios_by_year):
+    """부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율을 지표(행) × 연도(열)
+    표로 만든다. ROA는 DART가 안 줘서 순이익률×총자산회전율로 계산한다.
+    ratios_by_year: {연도: fetch_dart.fetch_financial_ratios() 결과 dict}."""
+    years = sorted(ratios_by_year.keys())
+    if not years:
+        return pd.DataFrame()
+
+    def _roa(y):
+        r = ratios_by_year[y]
+        nm, at = r.get('net_margin'), r.get('asset_turnover')
+        return nm * at / 100 if nm is not None and at is not None else None
+
+    specs = [
+        ('부채비율 (%)', lambda y: ratios_by_year[y].get('debt_ratio'), '{:.0f}'),
+        ('유동비율 (%)', lambda y: ratios_by_year[y].get('current_ratio'), '{:.0f}'),
+        ('이자보상배율 (배)', lambda y: ratios_by_year[y].get('interest_coverage'), '{:.1f}'),
+        ('ROE (%)', lambda y: ratios_by_year[y].get('roe'), '{:.1f}'),
+        ('ROA (%)', _roa, '{:.1f}'),
+        (
+            '총자산회전율 (배)',
+            lambda y: (ratios_by_year[y]['asset_turnover'] / 100) if ratios_by_year[y].get('asset_turnover') is not None else None,
+            '{:.2f}',
+        ),
+    ]
+    data = {}
+    for year in years:
+        col = []
+        for _, value_fn, fmt in specs:
+            v = value_fn(year)
+            col.append(fmt.format(v) if v is not None else '-')
+        data[f'{year}년'] = col
+    return pd.DataFrame(data, index=[label for label, _, _ in specs])
+
+
 def render_quant_scorecard():
-    """OpenAI API 없이, 이미 이 대시보드가 계산 중인 지표(PER/업계PER·리스크
-    지표·이동평균·DART 성장률)만으로 규칙 기반 판정을 내린다. 보유 종목 여부와
-    무관하게 코스피·코스닥 상장 종목이면 무엇이든 검색해서 볼 수 있다."""
+    """OpenAI API 없이, PER/업계PER·재무 안정성·수급·기술·공시 데이터를 종목별로
+    모아 보여준다. 보유 종목 여부와 무관하게 코스피·코스닥 상장 종목이면
+    무엇이든 검색해서 볼 수 있다."""
     listing = load_krx_listing()
 
     if listing.empty:
@@ -1969,6 +2001,11 @@ def render_quant_scorecard():
         return
     current_price = float(price_df['Close'].iloc[-1])
 
+    try:
+        price_5y_df = fetch_stock_series(ticker, datetime.now() - pd.Timedelta(days=PRICE_5Y_LOOKBACK_DAYS))
+    except Exception:
+        price_5y_df = pd.DataFrame()
+
     stocks = pd.DataFrame([{'ticker': ticker, 'market': market, 'current_price': current_price}])
     try:
         stocks = attach_per_columns(stocks)
@@ -1981,16 +2018,6 @@ def render_quant_scorecard():
     row = stocks.iloc[0]
     per, industry_per = row.get('per'), row.get('industry_per')
     mdd, pos_52w, vol_ratio = row.get('mdd'), row.get('pos_52w'), row.get('vol_ratio')
-
-    ma_df = price_df[['Close']].copy()
-    for w in MA_WINDOWS:
-        ma_df[f'MA{w}'] = ma_df['Close'].rolling(window=w).mean()
-    gaps = {}
-    if len(ma_df) >= MA_WINDOWS[0]:
-        last = ma_df.iloc[-1]
-        for w in MA_WINDOWS:
-            ma_val = last[f'MA{w}']
-            gaps[w] = (current_price - ma_val) / ma_val * 100 if pd.notna(ma_val) and ma_val else None
 
     try:
         annual_years, _ = fetch_dart_financials_cached(ticker)
@@ -2051,22 +2078,16 @@ def render_quant_scorecard():
     except Exception:
         shareholder = {}
 
-    val_score, val_text = _valuation_signal(per, industry_per)
-    pos_score, pos_text = _position_signal(pos_52w)
-    trend_score, trend_text = _trend_signal(gaps.get(20), gaps.get(60))
-    growth_score, growth_text = _growth_signal(revenue_yoy, oi_yoy)
     stability_score, stability_text = _stability_signal(debt_ratio, interest_coverage)
     dilution_score, dilution_text = _dilution_signal(capital_changes)
-    total_score = val_score + pos_score + trend_score + growth_score + stability_score + dilution_score
-    all_signals = (val_text, pos_text, trend_text, growth_text, stability_text, dilution_text)
 
     st.markdown(f'##### {name} ({ticker}) · {market or "-"}')
     if stability_score == -1 or dilution_score == -1:
         risk_lines = [t for t, s in zip((stability_text, dilution_text), (stability_score, dilution_score)) if s == -1]
         st.error('🚨 **주의: 재무·지배구조 위험 신호가 있습니다** — ' + ' / '.join(risk_lines))
 
-    tab_overview, tab_valuation, tab_stability, tab_flow, tab_events = st.tabs(
-        ['개요', '밸류에이션', '재무 안정성', '수급·기술', '공시·이벤트']
+    tab_overview, tab_valuation, tab_flow, tab_events = st.tabs(
+        ['개요', '밸류에이션·재무 안정성', '수급·기술', '공시·이벤트']
     )
 
     with tab_overview:
@@ -2084,48 +2105,63 @@ def render_quant_scorecard():
             st.caption('🔔 52주 신고가 갱신 중입니다.')
         elif pos_52w is not None and pos_52w <= 0.5:
             st.caption('🔔 52주 신저가 갱신 중입니다.')
-
-        st.divider()
-        if total_score >= 3:
-            st.success(f'**종합 판정: 긍정 신호 우세** (스코어 {total_score:+d}/6)')
-        elif total_score <= -3:
-            st.error(f'**종합 판정: 주의 신호 우세** (스코어 {total_score:+d}/6)')
-        else:
-            st.info(f'**종합 판정: 중립** (스코어 {total_score:+d}/6)')
-        for text in all_signals:
-            st.markdown(f'- {text}')
         if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
-            st.markdown(f'- 🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
-        st.caption(
-            '6개 지표(밸류에이션·위치·추세·성장성·안정성·희석위험)를 단순 규칙으로 조합한 점수이며 투자 조언이 아닙니다. '
-            '출처: pykrx/FinanceDataReader/DART (각 지표는 이 대시보드의 기존 캐시 주기를 그대로 따름).'
-        )
+            st.caption(f'🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
 
         if len(annual_years) >= 2:
             st.divider()
             chart_items = annual_years[-5:]
             x_labels = [str(y['year']) for y in chart_items]
             st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
-            st.caption('연도별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 사업보고서 (최근 5개년)')
+            st.caption('연도별 매출액·영업이익·영업이익률 · 출처: DART 사업보고서 (최근 5개년)')
 
         if len(quarterly_items) >= 2:
             st.divider()
             q_x_labels = [f"{it['year']}년 {it['quarter']}분기" for it in quarterly_items]
             st.altair_chart(_build_revenue_oi_chart(quarterly_items, q_x_labels), use_container_width=True)
-            st.caption('분기별 매출액·영업이익(막대) / 영업이익률(흰 선) · 출처: DART 분기/반기/사업보고서 (최근 3개년)')
+            st.caption('분기별 매출액·영업이익·영업이익률 · 출처: DART 분기/반기/사업보고서 (최근 3개년)')
+
+        if not price_5y_df.empty:
+            st.divider()
+            price_5y_chart = (
+                alt.Chart(price_5y_df[['Close']].reset_index())
+                .mark_line(color=NEUTRAL_CHART_COLOR)
+                .encode(
+                    x=alt.X('Date:T', title=None),
+                    y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
+                )
+                .properties(height=280)
+                .interactive()
+            )
+            st.altair_chart(price_5y_chart, use_container_width=True)
+            st.caption(f'{name} 최근 5년 주가 흐름 · 출처: FinanceDataReader')
 
     with tab_valuation:
-        st.markdown('###### 밸류에이션 지표')
-        val_rows = [
+        st.markdown('###### 현재 지표')
+        current_rows = [
             ('PER (배)', per, '{:.1f}', *_peer_ratio_tier(per, industry_per, higher_is_better=False)),
             ('PBR (배)', pbr, '{:.2f}', *_peer_ratio_tier(pbr, industry_pbr, higher_is_better=False)),
+            ('부채비율 (%)', debt_ratio, '{:.0f}', *_tier_and_icon(debt_ratio, 100, 200, higher_is_better=False)),
+            ('유동비율 (%)', current_ratio, '{:.0f}', *_tier_and_icon(current_ratio, 100, 200, higher_is_better=True)),
+            (
+                '이자보상배율 (배)', interest_coverage, '{:.1f}',
+                *_tier_and_icon(interest_coverage, 1, 3, higher_is_better=True),
+            ),
+            ('ROE (%)', roe, '{:.1f}', *_tier_and_icon(roe, 5, 15, higher_is_better=True)),
+            ('ROA (%)', roa, '{:.1f}', *_tier_and_icon(roa, 3, 8, higher_is_better=True)),
+            ('총자산회전율 (배)', asset_turnover, '{:.2f}', *_tier_and_icon(asset_turnover, 0.5, 1.5, higher_is_better=True)),
         ]
-        st.dataframe(_build_indicator_table(val_rows), use_container_width=True)
+        st.dataframe(_build_indicator_table(current_rows), use_container_width=True)
         st.caption(
-            f'업종: {industry_name or "-"} · "업종 평균 대비"는 pykrx 시장 전체 데이터에서 같은 업종 종목들의 '
-            'PER/PBR 중앙값과 비교한 실제 값입니다(0.8배 미만=하/저평가, 1.2배 초과=상/고평가). '
-            '✅=저평가 신호, ⚠️=업종 평균과 비슷, ❌=고평가 신호. 투자 조언이 아닙니다.'
+            f'업종: {industry_name or "-"} · PER/PBR의 "업종 평균 대비"는 pykrx 시장 전체 데이터에서 같은 업종 '
+            '종목들의 중앙값과 비교한 실제 값입니다(0.8배 미만=하, 1.2배 초과=상). 나머지 6개 지표는 pykrx가 '
+            '시장 전체로 제공하지 않아 재무분석에서 흔히 쓰는 일반적 기준선을 대신 썼습니다 — 부채비율 100%/200%, '
+            '유동비율 100%/200%, 이자보상배율 1배/3배, ROE 5%/15%, ROA 3%/8%, 총자산회전율 0.5배/1.5배. '
+            'ROA는 DART가 따로 안 줘서 순이익률×총자산회전율로 근사 계산했고, 총자산회전율은 업종별 편차가 커서 '
+            '이 기준선의 의미가 제한적입니다. ✅=우호적 신호, ⚠️=평균 수준, ❌=주의 신호 — 투자 조언이 아닙니다.'
         )
+
         st.divider()
         p1, p2 = st.columns(2)
         p1.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
@@ -2135,34 +2171,22 @@ def render_quant_scorecard():
             'PEG는 1보다 낮으면 성장성 대비 저평가, 높으면 고평가로 보는 게 일반적인 해석입니다.'
         )
 
-    with tab_stability:
-        st.markdown('###### 안정성 지표')
-        stability_rows = [
-            ('부채비율 (%)', debt_ratio, '{:.0f}', *_tier_and_icon(debt_ratio, 100, 200, higher_is_better=False)),
-            ('유동비율 (%)', current_ratio, '{:.0f}', *_tier_and_icon(current_ratio, 100, 200, higher_is_better=True)),
-            (
-                '이자보상배율 (배)', interest_coverage, '{:.1f}',
-                *_tier_and_icon(interest_coverage, 1, 3, higher_is_better=True),
-            ),
-        ]
-        st.dataframe(_build_indicator_table(stability_rows), use_container_width=True)
-        st.markdown(f'- {stability_text}')
-
         st.divider()
-        st.markdown('###### 효율성 지표')
-        efficiency_rows = [
-            ('ROE (%)', roe, '{:.1f}', *_tier_and_icon(roe, 5, 15, higher_is_better=True)),
-            ('ROA (%)', roa, '{:.1f}', *_tier_and_icon(roa, 3, 8, higher_is_better=True)),
-            ('총자산회전율 (배)', asset_turnover, '{:.2f}', *_tier_and_icon(asset_turnover, 0.5, 1.5, higher_is_better=True)),
-        ]
-        st.dataframe(_build_indicator_table(efficiency_rows), use_container_width=True)
-        st.caption(
-            '안정성·효율성 지표의 "업종 평균 대비"는 실제 동종업계 평균이 아니라(pykrx가 이 지표들은 시장 전체로 '
-            '제공하지 않음) 재무분석에서 흔히 쓰는 일반적 기준선입니다 — 부채비율 100%/200%, 유동비율 100%/200%, '
-            '이자보상배율 1배/3배, ROE 5%/15%, ROA 3%/8%, 총자산회전율 0.5배/1.5배를 "낮음/중간/높음" 경계로 삼았습니다. '
-            'ROA는 DART가 별도로 주지 않아 순이익률×총자산회전율로 근사 계산했고, 총자산회전율은 업종별 편차가 매우 커서 '
-            '이 기준선의 의미가 제한적입니다. 출처: DART 사업보고서 재무지표(하루 캐시).'
-        )
+        st.markdown('###### 5개년 추이')
+        try:
+            ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
+        except Exception:
+            ratios_by_year = {}
+        multi_year_table = _build_multi_year_ratio_table(ratios_by_year)
+        if multi_year_table.empty:
+            st.caption('5개년 추이를 계산할 데이터를 찾지 못했습니다.')
+        else:
+            st.dataframe(multi_year_table, use_container_width=True)
+            st.caption(
+                '부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율의 최근 5개 사업연도 추이입니다. '
+                'PER·PBR은 시가 기준이라 연도별 이력을 안정적으로 구할 free API가 없어 이 표에는 없고, '
+                '위 "현재 지표"의 오늘 기준 값만 제공합니다. 출처: DART 사업보고서 재무지표(하루 캐시).'
+            )
 
         if len(cfo_list) >= 1:
             st.divider()
@@ -2279,7 +2303,7 @@ def render_stock_opinion_tab():
     남아 있어 완전히 제거했다(stock_opinion.py 자체도 삭제)."""
     st.subheader('종목 분석')
     st.caption(
-        'PER/업계PER·리스크 지표·이동평균·DART 성장률을 규칙으로 조합해 즉시 판정합니다. '
+        '밸류에이션·재무 안정성·수급·기술·공시 데이터를 종목별로 모아 보여줍니다. '
         '코스피·코스닥 전 종목을 검색해 볼 수 있습니다.'
     )
     render_quant_scorecard()
