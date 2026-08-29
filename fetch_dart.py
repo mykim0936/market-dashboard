@@ -393,3 +393,51 @@ def fetch_largest_shareholder(corp_code, bsns_year):
     except (TypeError, ValueError):
         total_pct = None
     return {'name': first_row.get('nm'), 'total_pct': total_pct}
+
+
+def fetch_inventory(corp_code, bsns_year):
+    """최근 3개년 재고자산(억원)을 사업보고서 1회 조회로 받는다(재무상태표 계정,
+    fnlttSinglAcntAll.json — fetch_operating_cashflow와 같은 3개년-한번에 패턴).
+    재고자산이 사실상 없는 업종(예: 서비스업)은 계정 자체가 없을 수 있다.
+    반환: 연도 오름차순 [{'year':, 'inventory':}] — 계정을 못 찾으면 []."""
+    for fs_div in ('CFS', 'OFS'):
+        rows = _get('fnlttSinglAcntAll.json', {
+            'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011', 'fs_div': fs_div,
+        })
+        if not rows:
+            continue
+        inv_row = next(
+            (r for r in rows if r.get('sj_div') == 'BS' and r.get('account_nm') == '재고자산'), None,
+        )
+        if inv_row is None:
+            continue
+        by_year = {}
+        for amount_key, year_offset in (('thstrm_amount', 0), ('frmtrm_amount', 1), ('bfefrmtrm_amount', 2)):
+            value = _to_amount(inv_row, amount_key)
+            if value is not None:
+                by_year[int(bsns_year) - year_offset] = value
+        if by_year:
+            return sorted(({'year': y, 'inventory': v} for y, v in by_year.items()), key=lambda x: x['year'])
+    return []
+
+
+def fetch_major_shareholder_trades(corp_code):
+    """5% 이상 대량보유자(주요주주)의 지분 변동 보고 이력을 전부 받는다(대량보유
+    상황보고, majorstock.json — bsns_year 없이 회사 단위로 전체 이력을 준다).
+    report_resn(보고사유)에 "처분"이 들어있으면 매도를 뜻한다. 반환:
+    [{'date':, 'holder':, 'reason':, 'stake_change_pct':}] (DART가 주는 순서 그대로,
+    보통 최신순) — 실패/없음 시 []."""
+    rows = _get('majorstock.json', {'corp_code': corp_code})
+    if not rows:
+        return []
+    items = []
+    for r in rows:
+        try:
+            change = float(str(r.get('stkrt_irds')).replace(',', ''))
+        except (TypeError, ValueError):
+            change = None
+        items.append({
+            'date': r.get('rcept_dt'), 'holder': r.get('repror'),
+            'reason': r.get('report_resn'), 'stake_change_pct': change,
+        })
+    return items

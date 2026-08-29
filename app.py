@@ -645,6 +645,48 @@ def fetch_dart_largest_shareholder_cached(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_debt_trend_cached(ticker):
+    """보유 종목 집중점검의 "재무 건전성 악화" 판정용 — 최근 확인 가능한 2개
+    연도의 부채비율을 {연도: 부채비율} 형태로 모은다(사업보고서가 아직 안 나온
+    연도는 자동으로 건너뛴다)."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return {}
+    this_year = datetime.now().year
+    result = {}
+    for bsns_year in (this_year - 1, this_year - 2, this_year - 3):
+        ratios = fetch_dart.fetch_financial_ratios(corp_code, str(bsns_year))
+        if ratios.get('debt_ratio') is not None:
+            result[bsns_year] = ratios['debt_ratio']
+        if len(result) >= 2:
+            break
+    return result
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_inventory_cached(ticker):
+    """보유 종목 집중점검의 "재고 급증" 판정용 — 최근 3개년 재고자산(억원)."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return []
+    this_year = datetime.now().year
+    for bsns_year in (this_year - 1, this_year - 2):
+        items = fetch_dart.fetch_inventory(corp_code, str(bsns_year))
+        if items:
+            return items
+    return []
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_major_trades_cached(ticker):
+    """보유 종목 집중점검의 "대주주 지분 매도" 판정용 — 5% 이상 대량보유자 신고 이력."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return []
+    return fetch_dart.fetch_major_shareholder_trades(corp_code)
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_quarterly_financials_cached(ticker):
     """종목 상세 패널의 분기별 보기용 — 최근 최대 8개 분기 매출액·영업이익(억원)을
     구한다. 반환: (분기 오름차순 리스트, fs_div) — 못 찾으면 ([], None)."""
@@ -1100,90 +1142,135 @@ def render_portfolio_panel():
     )
 
 
-def style_risk_table(df):
-    """손절가까지(%)가 음수면(이미 손절가 밑으로 내려왔으면) 빨강, 목표가까지(%)가
-    음수면(이미 목표가를 넘었으면) 초록으로 강조한다."""
-    def color_stop(v):
-        if pd.isna(v):
-            return ''
-        return f'color: {UP_COLOR}; font-weight: 700' if v < 0 else ''
+def _diagnose_holding(ticker):
+    """종목 하나에 5가지 이상 신호가 있는지 DART 데이터로 점검한다.
+    반환: [(신호 라벨, 쉬운 설명 문자열)] — 이상 없으면 빈 리스트."""
+    findings = []
 
-    def color_target(v):
-        if pd.isna(v):
-            return ''
-        return f'color: {SWISS_GREEN}; font-weight: 700' if v < 0 else ''
+    try:
+        annual_years, _ = fetch_dart_financials_cached(ticker)
+    except Exception:
+        annual_years = []
+    revenue_yoy = oi_yoy = latest_oi = None
+    if len(annual_years) >= 2:
+        latest, prev = annual_years[-1], annual_years[-2]
+        revenue_yoy = _growth_pct(latest.get('revenue'), prev.get('revenue'))
+        oi_yoy = _growth_pct(latest.get('operating_income'), prev.get('operating_income'))
+        latest_oi = latest.get('operating_income')
 
-    return (
-        df.style
-        .map(color_stop, subset=['손절가까지(%)'])
-        .map(color_target, subset=['목표가까지(%)'])
-        .format({
-            '현재가': '{:,.0f}',
-            '고점대비(%)': '{:.1f}',
-            '52주 위치(%)': '{:.0f}',
-            '거래량배율': '{:.1f}x',
-            '목표가': '{:,.0f}',
-            '목표가까지(%)': '{:+.1f}',
-            '손절가': '{:,.0f}',
-            '손절가까지(%)': '{:+.1f}',
-        }, na_rep='-')
-    )
+    # 1. 마진 악화: 매출은 늘었는데 영업이익은 줄었다.
+    if revenue_yoy is not None and oi_yoy is not None and revenue_yoy > 0 and oi_yoy < 0:
+        findings.append((
+            '마진 악화',
+            f'매출은 {revenue_yoy:+.1f}% 늘었는데 영업이익은 {oi_yoy:+.1f}% 줄었습니다. '
+            '팔리기는 하는데 남는 돈이 줄고 있다는 뜻 — 원가 상승이나 경쟁 심화로 수익성이 나빠지고 있을 수 있습니다.'
+        ))
+
+    # 2. 이익의 질: 영업이익은 있는데 실제 현금흐름은 그에 못 미친다.
+    try:
+        cfo_list = fetch_dart_cashflow_cached(ticker)
+    except Exception:
+        cfo_list = []
+    if cfo_list and latest_oi is not None and latest_oi > 0:
+        latest_cfo = cfo_list[-1]['cfo']
+        if latest_cfo is not None and latest_cfo < latest_oi * 0.5:
+            findings.append((
+                '이익의 질 문제',
+                f'영업이익은 {latest_oi:,.0f}억원인데 실제 영업활동현금흐름은 {latest_cfo:,.0f}억원에 그칩니다. '
+                '장부상 이익만큼 현금이 안 들어온다는 뜻 — 외상매출(매출채권)이 쌓이고 있거나 재고가 안 팔리고 있을 가능성이 있습니다.'
+            ))
+
+    # 3. 재무 건전성 악화: 부채비율이 짧은 기간에 크게 뛰었다.
+    try:
+        debt_trend = fetch_dart_debt_trend_cached(ticker)
+    except Exception:
+        debt_trend = {}
+    if len(debt_trend) >= 2:
+        years_sorted = sorted(debt_trend.keys())
+        old_debt, new_debt = debt_trend[years_sorted[0]], debt_trend[years_sorted[-1]]
+        if old_debt is not None and new_debt - old_debt >= 30:
+            findings.append((
+                '재무 건전성 악화',
+                f'부채비율이 {years_sorted[0]}년 {old_debt:.0f}%에서 {years_sorted[-1]}년 {new_debt:.0f}%로 '
+                f'{new_debt - old_debt:+.0f}%p 뛰었습니다. 빚을 늘려 사업을 유지하고 있다는 신호일 수 있습니다.'
+            ))
+
+    # 4. 판매 부진: 매출 증가율보다 재고가 훨씬 빠르게 늘었다.
+    try:
+        inventory_list = fetch_dart_inventory_cached(ticker)
+    except Exception:
+        inventory_list = []
+    if len(inventory_list) >= 2:
+        latest_inv, prev_inv = inventory_list[-1]['inventory'], inventory_list[-2]['inventory']
+        inv_yoy = _growth_pct(latest_inv, prev_inv)
+        if inv_yoy is not None and inv_yoy >= 30 and (revenue_yoy is None or inv_yoy - revenue_yoy >= 20):
+            revenue_note = f'매출 {revenue_yoy:+.1f}%' if revenue_yoy is not None else '매출 증가율 확인 불가'
+            findings.append((
+                '재고 급증',
+                f'재고자산이 최근 1년 새 {inv_yoy:+.1f}% 늘었는데 {revenue_note}에 그쳤습니다. '
+                '만든 건 늘었는데 안 팔리고 쌓이고 있다는 뜻 — 판매 부진 신호일 수 있습니다.'
+            ))
+
+    # 5. 대주주(5% 이상 대량보유자) 지분 매도 — 최근 90일 내 "처분" 사유 공시.
+    try:
+        trades = fetch_dart_major_trades_cached(ticker)
+    except Exception:
+        trades = []
+    cutoff = (datetime.now() - pd.Timedelta(days=90)).strftime('%Y%m%d')
+    recent_sells = [t for t in trades if (t.get('date') or '') >= cutoff and '처분' in (t.get('reason') or '')]
+    if recent_sells:
+        latest_sell = recent_sells[0]
+        findings.append((
+            '대주주 지분 매도',
+            f'최근 90일 내 {latest_sell.get("holder") or "대주주"}의 지분 처분 공시가 있었습니다'
+            f'(접수일 {latest_sell.get("date")}, 사유: {latest_sell.get("reason")}). '
+            '회사 내부자·대주주가 주식을 파는 데는 여러 이유가 있을 수 있지만, '
+            '규모가 크면 향후 전망에 대한 부정적 신호로 해석되기도 합니다.'
+        ))
+
+    return findings
 
 
-def render_risk_panel():
-    """보유 종목별 리스크·타이밍 지표 — MDD(52주 고점대비 낙폭), 52주 최고/최저 대비
-    현재 위치, 당일 거래량 배율, 목표가·손절가 진행률을 한 표로 모아 보여준다.
-    전부 이미 받아오는 주가 시계열로 계산해서 추가 API 호출이 없다."""
-    st.subheader('리스크 지표')
+def render_concentration_check():
+    """보유 종목 집중점검 — 마진 악화·이익의 질·재무건전성·재고급증·대주주매도
+    5가지 이상 신호를 DART 데이터로 자동 스캔한다. 종목 하나당 여러 번의 DART
+    조회가 필요해 무겁다(하루 캐시로 완화). 예전 "리스크 지표"(MDD/52주위치/
+    거래량배율/목표가·손절가) 패널을 대체한다 — 그 지표들은 정량 스코어카드
+    (종목 분석 탭)에서 검색한 종목별로 그대로 볼 수 있다."""
+    st.subheader('보유 종목 집중점검')
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
-        st.info('보유 종목이 없어 리스크 지표를 볼 수 없습니다.')
+        st.info('보유 종목이 없어 집중점검을 할 수 없습니다.')
         return
-
     stocks = portfolio_df[portfolio_df['ticker'] != CASH_TICKER]
     if stocks.empty:
-        st.info('보유 종목이 없어 리스크 지표를 볼 수 없습니다.')
+        st.info('보유 종목이 없어 집중점검을 할 수 없습니다.')
         return
 
-    with st.spinner('리스크 지표 계산 중...'):
-        try:
-            stocks = attach_risk_columns(stocks)
-        except Exception as e:
-            st.warning(f'리스크 지표를 계산하지 못했습니다: {e}')
-            return
+    with st.spinner('보유 종목의 재무 데이터를 점검하는 중... (DART 조회, 시간이 걸릴 수 있습니다)'):
+        results = [(row['name'], _diagnose_holding(str(row['ticker']))) for _, row in stocks.iterrows()]
 
-    target = pd.to_numeric(stocks.get('target_price'), errors='coerce')
-    stop = pd.to_numeric(stocks.get('stop_price'), errors='coerce')
-    current = pd.to_numeric(stocks['current_price'], errors='coerce')
+    flagged = [(n, f) for n, f in results if f]
+    clean = [n for n, f in results if not f]
 
-    table = pd.DataFrame({
-        '종목명': stocks['name'],
-        '현재가': current,
-        '고점대비(%)': stocks['mdd'],
-        '52주 위치(%)': stocks['pos_52w'],
-        '거래량배율': stocks['vol_ratio'],
-        '목표가': target,
-        '목표가까지(%)': (target - current) / current * 100,
-        '손절가': stop,
-        '손절가까지(%)': (current - stop) / current * 100,
-    })
+    if not flagged:
+        st.success('✅ 보유 종목 전체에서 5가지 이상 신호가 감지되지 않았습니다.')
+    else:
+        st.error(f'🚨 {len(flagged)}개 종목에서 이상 신호가 감지되었습니다 — ' + ', '.join(n for n, _ in flagged))
+        for name, findings in flagged:
+            with st.expander(f'⚠️ {name} — {len(findings)}건', expanded=True):
+                for label, explanation in findings:
+                    st.markdown(f'**{label}**  \n{explanation}')
 
-    st.dataframe(style_risk_table(table), width='stretch', hide_index=True)
-
-    surging = table[table['거래량배율'] >= VOLUME_SURGE_RATIO]['종목명'].tolist()
-    if surging:
-        st.info(f'거래량 급증({VOLUME_SURGE_RATIO:.0f}배 이상): ' + ', '.join(surging))
-
-    breached = table[table['손절가까지(%)'] < 0]['종목명'].tolist()
-    if breached:
-        st.warning(f'손절가 이탈: {", ".join(breached)} — 대응 원칙을 다시 확인하세요.')
+    if clean:
+        st.caption('이상 신호 없음: ' + ', '.join(clean))
 
     st.caption(
-        '고점대비(MDD)·52주 위치·거래량배율은 최근 52주 종가 기준(FDR). '
-        '목표가·손절가는 portfolio.csv(또는 Secrets)의 target_price/stop_price에 '
-        '직접 입력해야 나옵니다 — 비워두면 "-"로 표시됩니다. '
-        f'거래량배율 {VOLUME_SURGE_RATIO:.0f}배 이상은 급증으로 안내합니다.'
+        '5가지 신호 — ① 매출 증가+영업이익 감소(마진 악화) ② 영업이익 대비 영업활동현금흐름 부족(이익의 질) '
+        '③ 부채비율 급등(재무 건전성) ④ 매출 증가율 대비 재고 급증(판매 부진) ⑤ 최근 90일 내 5% 이상 대량보유자의 지분 처분 공시. '
+        '⑤는 5% 이상 대량보유자(주요주주) 신고 기준이라 소규모 임원 개인 거래는 포함되지 않을 수 있습니다. '
+        '전부 DART 공시 데이터 기반 자동 판정이며 투자 조언이 아닙니다. 출처: DART, 하루 캐시.'
     )
 
 
@@ -2343,8 +2430,8 @@ def main():
     with tab_portfolio:
         st.fragment(run_every=interval)(render_portfolio_live)()
         st.divider()
-        # 종목마다 시계열을 새로 받아야 해서 무거워 자동 새로고침 대상이 아니다.
-        render_risk_panel()
+        # 종목마다 여러 DART 조회가 필요해 무거워 자동 새로고침 대상이 아니다.
+        render_concentration_check()
         st.divider()
         # 종목 선택 상호작용 패널이라 자동 새로고침 대상이 아니다(RS 탭과 같은 이유).
         render_stock_detail_panel()
