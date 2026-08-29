@@ -567,16 +567,22 @@ def fetch_dart_financial_ratios_5y_cached(ticker):
 
 @st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_cashflow_cached(ticker):
-    """정량 스코어카드의 "이익의 질" 카드용 — 최근 3개년 영업활동현금흐름(억원)."""
+    """정량 스코어카드의 "이익의 질" 차트용 — 최근 5개년 영업활동현금흐름(억원).
+    fetch_dart.fetch_operating_cashflow()는 한 번에 3개년(당기/전기/전전기)만
+    주므로, 앵커 연도를 두 번(최근·3년 전) 걸쳐 불러 합친다."""
     corp_code = fetch_dart_corp_map().get(ticker)
     if not corp_code:
         return []
     this_year = datetime.now().year
-    for bsns_year in (this_year - 1, this_year - 2):
-        cfo = fetch_dart.fetch_operating_cashflow(corp_code, str(bsns_year))
-        if cfo:
-            return cfo
-    return []
+    by_year = {}
+    for anchor in (this_year - 1, this_year - 2, this_year - 4, this_year - 5):
+        items = fetch_dart.fetch_operating_cashflow(corp_code, str(anchor))
+        for it in items:
+            by_year.setdefault(it['year'], it['cfo'])
+        if len(by_year) >= 5:
+            break
+    years = sorted(by_year.keys())[-5:]
+    return [{'year': y, 'cfo': by_year[y]} for y in years]
 
 
 # 강조 배지를 붙일 공시 유형 — 증자/사채/최대주주 변경/합병·분할 등 희석·지배구조
@@ -1155,9 +1161,10 @@ def render_portfolio_panel():
     st.caption(file_caption(PORTFOLIO_CSV, 'FinanceDataReader (KRX 종가/등락률)') +
                ' · 비중은 현금 제외 주식 평가금액 대비')
     st.markdown(
-        '- **PER** — DART 전자공시(사업보고서) EPS 기준 값에 오늘 현재가를 나눈 값 (순손실 종목은 산정 불가로 "-")\n'
+        '- **PER (Price Earnings Ratio, 주가수익비율)** — DART 전자공시(사업보고서) 주당순이익(EPS) 기준 값에 '
+        '오늘 현재가를 나눈 값 (순손실 종목은 산정 불가로 "-")\n'
         '- **업계 PER** — pykrx 기준 같은 시장(코스피/코스닥)·같은 업종 내 다른 종목들의 PER 중앙값 (적자 종목 제외)\n'
-        '- ETF·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다'
+        '- **ETF (Exchange Traded Fund, 상장지수펀드)**·시장 구분이 없는 종목은 둘 다 "-"로 표시됩니다'
     )
 
 
@@ -1375,9 +1382,10 @@ def _render_growth_metrics(items, period_type):
     cols = st.columns(len(rows))
     for col, (label, value) in zip(cols, rows):
         col.metric(label, f'{value:+.1f}%' if value is not None else '-', delta_color='off')
-    st.caption(
-        '증감률은 위 차트와 같은 구간(최신 항목) 기준입니다. '
-        '분기별 QoQ는 계절성이 큰 업종에서는 왜곡될 수 있어 YoY와 함께 봅니다.'
+    st.markdown(
+        '- **YoY (Year over Year, 전년동기대비)** — 작년 같은 기간과 비교한 증감률\n'
+        '- **QoQ (Quarter over Quarter, 전분기대비)** — 바로 직전 분기와 비교한 증감률 (계절성이 큰 업종에서는 왜곡될 수 있어 YoY와 함께 봅니다)\n'
+        '- 증감률은 위 차트와 같은 구간(최신 항목) 기준입니다'
     )
 
 
@@ -1506,7 +1514,8 @@ def _render_moving_average_section(ticker, selected_name):
     rsi_col, macd_col = st.columns(2)
 
     with rsi_col:
-        st.markdown('###### RSI(14)')
+        st.markdown('###### RSI(14, Relative Strength Index, 상대강도지수)')
+        st.caption('최근 가격 상승압력과 하락압력의 상대적 크기를 0~100 사이 숫자로 나타낸 지표입니다.')
         rsi_chart_df = display_df[['Date', 'RSI']].dropna()
         if rsi_chart_df.empty:
             st.info('RSI를 계산할 만큼 데이터가 충분하지 않습니다.')
@@ -1532,7 +1541,8 @@ def _render_moving_average_section(ticker, selected_name):
             st.caption('70 이상 과매수, 30 이하 과매도로 흔히 해석합니다(점선 기준선).')
 
     with macd_col:
-        st.markdown('###### MACD(12, 26, 9)')
+        st.markdown('###### MACD(12, 26, 9, Moving Average Convergence Divergence, 이동평균수렴확산지수)')
+        st.caption('단기 이동평균과 장기 이동평균의 차이로 추세 전환을 포착하는 지표입니다.')
         macd_chart_df = display_df[['Date', 'MACD', 'MACD_signal', 'MACD_hist']].dropna()
         if macd_chart_df.empty:
             st.info('MACD를 계산할 만큼 데이터가 충분하지 않습니다.')
@@ -1929,13 +1939,15 @@ def _build_indicator_table(rows):
     ]).set_index('지표')
 
 
-def _build_multi_year_ratio_table(ratios_by_year):
-    """부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율을 지표(행) × 연도(열)
-    표로 만든다. ROA는 DART가 안 줘서 순이익률×총자산회전율로 계산한다.
+def _build_ratio_trend_chart(ratios_by_year):
+    """부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율의 5개년 추이를
+    지표별 작은 꺾은선 그래프 6개(3열 그리드, 각자 독립된 y축)로 만든다.
+    단위가 서로 달라(%, 배) 한 차트에 같이 그리면 비교가 안 되므로 나눴다.
+    ROA는 DART가 안 줘서 순이익률×총자산회전율로 근사 계산한다.
     ratios_by_year: {연도: fetch_dart.fetch_financial_ratios() 결과 dict}."""
     years = sorted(ratios_by_year.keys())
     if not years:
-        return pd.DataFrame()
+        return None
 
     def _roa(y):
         r = ratios_by_year[y]
@@ -1943,25 +1955,70 @@ def _build_multi_year_ratio_table(ratios_by_year):
         return nm * at / 100 if nm is not None and at is not None else None
 
     specs = [
-        ('부채비율 (%)', lambda y: ratios_by_year[y].get('debt_ratio'), '{:.0f}'),
-        ('유동비율 (%)', lambda y: ratios_by_year[y].get('current_ratio'), '{:.0f}'),
-        ('이자보상배율 (배)', lambda y: ratios_by_year[y].get('interest_coverage'), '{:.1f}'),
-        ('ROE (%)', lambda y: ratios_by_year[y].get('roe'), '{:.1f}'),
-        ('ROA (%)', _roa, '{:.1f}'),
+        ('부채비율 (%)', lambda y: ratios_by_year[y].get('debt_ratio')),
+        ('유동비율 (%)', lambda y: ratios_by_year[y].get('current_ratio')),
+        ('이자보상배율 (배)', lambda y: ratios_by_year[y].get('interest_coverage')),
+        ('ROE (%)', lambda y: ratios_by_year[y].get('roe')),
+        ('ROA (%)', _roa),
         (
             '총자산회전율 (배)',
             lambda y: (ratios_by_year[y]['asset_turnover'] / 100) if ratios_by_year[y].get('asset_turnover') is not None else None,
-            '{:.2f}',
         ),
     ]
-    data = {}
-    for year in years:
-        col = []
-        for _, value_fn, fmt in specs:
+    rows = []
+    for label, value_fn in specs:
+        for year in years:
             v = value_fn(year)
-            col.append(fmt.format(v) if v is not None else '-')
-        data[f'{year}년'] = col
-    return pd.DataFrame(data, index=[label for label, _, _ in specs])
+            if v is not None:
+                rows.append({'연도': str(year), '지표': label, '값': v})
+    if not rows:
+        return None
+
+    chart = (
+        alt.Chart(pd.DataFrame(rows))
+        .mark_line(point=True, color=SWISS_GREEN)
+        .encode(
+            x=alt.X('연도:N', title=None),
+            y=alt.Y('값:Q', title=None),
+            tooltip=[alt.Tooltip('연도:N'), alt.Tooltip('지표:N'), alt.Tooltip('값:Q', format=',.2f')],
+        )
+        .properties(height=150, width=180)
+        .facet(facet=alt.Facet('지표:N', title=None), columns=3)
+        .resolve_scale(y='independent')
+    )
+    return chart
+
+
+def _build_cfo_oi_chart(cfo_list, oi_by_year):
+    """영업활동현금흐름과 영업이익을 연도별 그룹 막대로 겹쳐 그린다("이익의 질"
+    확인용) — 둘 다 억원 단위라 축을 하나만 쓴다."""
+    rows = []
+    for item in cfo_list:
+        year = str(item['year'])
+        if item.get('cfo') is not None:
+            rows.append({'연도': year, '항목': '영업활동현금흐름', '금액(억원)': item['cfo']})
+        oi = oi_by_year.get(item['year'])
+        if oi is not None:
+            rows.append({'연도': year, '항목': '영업이익', '금액(억원)': oi})
+    if not rows:
+        return None
+
+    years_order = [str(item['year']) for item in cfo_list]
+    return (
+        alt.Chart(pd.DataFrame(rows))
+        .mark_bar()
+        .encode(
+            x=alt.X('연도:N', title=None, sort=years_order),
+            xOffset=alt.XOffset('항목:N'),
+            y=alt.Y('금액(억원):Q', title='억원'),
+            color=alt.Color(
+                '항목:N', title=None,
+                scale=alt.Scale(domain=['영업활동현금흐름', '영업이익'], range=[SWISS_GREEN, SWISS_GRAY]),
+            ),
+            tooltip=[alt.Tooltip('연도:N'), alt.Tooltip('항목:N'), alt.Tooltip('금액(억원):Q', format=',.0f')],
+        )
+        .properties(height=280)
+    )
 
 
 def render_quant_scorecard():
@@ -2109,6 +2166,11 @@ def render_quant_scorecard():
             st.caption('🔔 52주 신저가 갱신 중입니다.')
         if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
             st.caption(f'🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
+        st.markdown(
+            '- **PER (Price Earnings Ratio, 주가수익비율)** — 주가 ÷ 주당순이익(EPS). 낮을수록 이익 대비 주가가 저렴하다는 뜻\n'
+            '- **MDD (Maximum Drawdown, 최대낙폭)** — 52주 최고가 대비 현재가가 얼마나 떨어졌는지\n'
+            '- **YoY (Year over Year, 전년동기대비)** — 작년 같은 기간과 비교한 증감률'
+        )
 
         if len(annual_years) >= 2:
             st.divider()
@@ -2157,13 +2219,18 @@ def render_quant_scorecard():
         st.dataframe(_build_indicator_table(current_rows), use_container_width=True)
         st.caption(f'업종: {industry_name or "-"}')
         st.markdown(
-            '- **PER / PBR** — pykrx 시장 전체에서 같은 업종 종목들의 중앙값과 비교한 실제 값 (0.8배 미만=하, 1.2배 초과=상)\n'
-            '- **부채비율** — 100% 미만 안정, 200% 초과 위험\n'
-            '- **유동비율** — 100% 미만 위험, 200% 초과 안정\n'
-            '- **이자보상배율** — 1배 미만 위험, 3배 초과 안전\n'
-            '- **ROE** — 5% 미만 낮음, 15% 초과 우수\n'
-            '- **ROA** — 3% 미만 낮음, 8% 초과 우수 (DART가 따로 안 줘서 순이익률×총자산회전율로 근사 계산)\n'
-            '- **총자산회전율** — 업종별 편차가 커서 0.5배/1.5배 기준의 의미가 제한적\n'
+            '- **PER (Price Earnings Ratio, 주가수익비율)** — 주가 ÷ 주당순이익(EPS). 낮을수록 이익 대비 주가가 저렴 '
+            '(0.8배 미만=하/저평가, 1.2배 초과=상/고평가, 업종 중앙값과 비교)\n'
+            '- **PBR (Price Book-value Ratio, 주가순자산비율)** — 주가 ÷ 주당순자산. 1배 미만이면 지금 회사를 청산했을 때 '
+            '받는 돈보다 주가가 싸다는 뜻 (기준은 PER과 동일)\n'
+            '- **부채비율** — 총부채 ÷ 자기자본(%). 100% 미만 안정, 200% 초과 위험\n'
+            '- **유동비율** — 유동자산 ÷ 유동부채(%). 1년 내 갚을 빚을 감당할 여력 — 100% 미만 위험, 200% 초과 안정\n'
+            '- **이자보상배율** — 영업이익 ÷ 이자비용(배). 1배 미만이면 번 돈으로 이자도 못 갚는다는 뜻, 3배 초과면 안전\n'
+            '- **ROE (Return on Equity, 자기자본이익률)** — 자기자본 대비 순이익 비율(%). 5% 미만 낮음, 15% 초과 우수\n'
+            '- **ROA (Return on Assets, 총자산이익률)** — 전체 자산 대비 순이익 비율(%). 3% 미만 낮음, 8% 초과 우수 '
+            '(DART가 따로 안 줘서 순이익률×총자산회전율로 근사 계산)\n'
+            '- **총자산회전율** — 매출액 ÷ 총자산(배). 자산을 얼마나 효율적으로 매출로 굴렸는지 — 업종별 편차가 커서 '
+            '0.5배/1.5배 기준의 의미가 제한적\n'
             '- 부채비율~총자산회전율 6개는 pykrx가 시장 전체로 제공하지 않아 실제 업종 평균이 아니라 재무분석에서 흔히 쓰는 일반적 기준선입니다\n'
             '- ✅=우호적 신호, ⚠️=평균 수준, ❌=주의 신호 — 투자 조언이 아닙니다'
         )
@@ -2173,8 +2240,10 @@ def render_quant_scorecard():
         p1.metric('PSR', f'{psr:.2f}배' if psr is not None else '-')
         p2.metric('PEG', f'{peg:.2f}' if peg is not None else '-')
         st.markdown(
-            '- **PSR** — PER × 순이익률\n'
-            '- **PEG** — PER ÷ 영업이익 YoY (1 미만이면 성장성 대비 저평가, 1 초과면 고평가로 보는 게 일반적)'
+            '- **PSR (Price Sales Ratio, 주가매출비율)** — 시가총액 ÷ 매출액. 적자라 PER을 못 구할 때 대안으로 씀 '
+            '(이 페이지에서는 PER × 순이익률로 계산)\n'
+            '- **PEG (Price Earnings to Growth Ratio, 주가수익성장비율)** — PER ÷ 영업이익 성장률(YoY). 성장성 대비 '
+            'PER이 비싼지 판단 — 1 미만이면 저평가, 1 초과면 고평가로 보는 게 일반적'
         )
 
         st.divider()
@@ -2183,41 +2252,45 @@ def render_quant_scorecard():
             ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
         except Exception:
             ratios_by_year = {}
-        multi_year_table = _build_multi_year_ratio_table(ratios_by_year)
-        if multi_year_table.empty:
+        ratio_trend_chart = _build_ratio_trend_chart(ratios_by_year)
+        if ratio_trend_chart is None:
             st.caption('5개년 추이를 계산할 데이터를 찾지 못했습니다.')
         else:
-            st.dataframe(multi_year_table, use_container_width=True)
+            st.altair_chart(ratio_trend_chart, use_container_width=True)
             st.markdown(
                 '- 부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율의 최근 5개 사업연도 추이입니다\n'
-                '- PER·PBR은 시가 기준이라 연도별 이력을 안정적으로 구할 무료 API가 없어 이 표에서는 빠졌습니다 '
+                '- PER·PBR은 시가 기준이라 연도별 이력을 안정적으로 구할 무료 API가 없어 이 그래프에서는 빠졌습니다 '
                 '(위 "현재 지표"의 오늘 기준 값만 제공)\n'
                 '- 출처: DART 사업보고서 재무지표(하루 캐시)'
             )
 
         if len(cfo_list) >= 1:
             st.divider()
-            st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 3개년)')
+            st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 5개년)')
             oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
-            rows = []
-            for item in cfo_list:
-                year = item['year']
-                oi = oi_by_year.get(year)
-                rows.append({
-                    '연도': year, '영업활동현금흐름(억원)': item['cfo'],
-                    '영업이익(억원)': oi,
-                    '괴리(현금-영업이익)': (item['cfo'] - oi) if oi is not None else None,
-                })
-            cfo_df = pd.DataFrame(rows).set_index('연도')
-            st.dataframe(cfo_df.style.format('{:,.0f}', na_rep='-'), use_container_width=True)
-            gap_years = [r for r in rows if r['괴리(현금-영업이익)'] is not None and r['괴리(현금-영업이익)'] < 0]
-            if len(gap_years) >= 2:
-                st.warning(
-                    '⚠️ 최근 3개년 중 2개년 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
-                    '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
-                    '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
+            cfo_oi_chart = _build_cfo_oi_chart(cfo_list, oi_by_year)
+            if cfo_oi_chart is None:
+                st.caption('이익의 질을 계산할 데이터를 찾지 못했습니다.')
+            else:
+                st.altair_chart(cfo_oi_chart, use_container_width=True)
+                gap_years = [
+                    item for item in cfo_list
+                    if item.get('cfo') is not None and oi_by_year.get(item['year']) is not None
+                    and item['cfo'] < oi_by_year[item['year']]
+                ]
+                if len(gap_years) >= max(2, (len(cfo_list) + 1) // 2):
+                    st.warning(
+                        '⚠️ 최근 5개년 중 절반 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
+                        '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
+                        '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
+                    )
+                st.markdown(
+                    '- **영업활동현금흐름(CFO, Cash Flow from Operations)** — 실제로 영업에서 들어오고 나간 현금\n'
+                    '- **영업이익** — 회계상 장부에 기록된 이익 (실제 현금 유출입과는 다를 수 있음)\n'
+                    '- 두 값이 비슷하게 움직이면 "이익의 질"이 좋다고 보고, 영업이익은 느는데 현금흐름이 안 따라오면 '
+                    '주의 신호로 봅니다\n'
+                    '- 출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시'
                 )
-            st.caption('출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시.')
 
     with tab_flow:
         if 'Volume' in price_df.columns and len(price_df) >= 20:
