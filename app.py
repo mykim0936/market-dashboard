@@ -566,6 +566,25 @@ def fetch_dart_financial_ratios_5y_cached(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
+def fetch_dart_balance_ratios_5y_cached(ticker):
+    """정량 스코어카드 "5개년 추이" 그래프용 — 부채비율/유동비율/ROE/ROA/
+    총자산회전율을 원본 재무제표(BS/IS)에서 직접 계산해 최근 5개년까지 받는다.
+    fetch_dart_financial_ratios_5y_cached(fnlttSinglIndx 기반)는 이 지표들을
+    최근 1~2개년치만 주는 회사가 많아(2026-08 확인) 대신 만들었다 — 원본 계정은
+    더 오래전까지 있어서 fetch_dart.fetch_balance_sheet_ratios()가 앵커 연도
+    2개(최근·4년 전)를 합쳐 최대 6개년을 커버한다."""
+    corp_code = fetch_dart_corp_map().get(ticker)
+    if not corp_code:
+        return {}
+    this_year = datetime.now().year
+    by_year = {}
+    for anchor in (this_year - 1, this_year - 4):
+        by_year.update(fetch_dart.fetch_balance_sheet_ratios(corp_code, str(anchor)))
+    years = sorted(by_year.keys())[-5:]
+    return {y: by_year[y] for y in years}
+
+
+@st.cache_data(ttl=DART_TTL_SEC)
 def fetch_dart_cashflow_cached(ticker):
     """정량 스코어카드의 "이익의 질" 차트용 — 최근 5개년 영업활동현금흐름(억원).
     fetch_dart.fetch_operating_cashflow()는 한 번에 3개년(당기/전기/전전기)만
@@ -583,27 +602,6 @@ def fetch_dart_cashflow_cached(ticker):
             break
     years = sorted(by_year.keys())[-5:]
     return [{'year': y, 'cfo': by_year[y]} for y in years]
-
-
-# 강조 배지를 붙일 공시 유형 — 증자/사채/최대주주 변경/합병·분할 등 희석·지배구조
-# 관련 이벤트. report_nm에 이 문자열이 하나라도 들어있으면 🔴로 강조한다.
-DISCLOSURE_HIGHLIGHT_KEYWORDS = (
-    '유상증자', '무상증자', '전환사채', '신주인수권부사채', '교환사채',
-    '최대주주', '단일판매', '공급계약', '회사분할', '회사합병', '감자',
-    '자기주식취득', '자기주식처분',
-)
-DISCLOSURE_LOOKBACK_DAYS = 180  # 최근 6개월
-
-
-@st.cache_data(ttl=DART_TTL_SEC)
-def fetch_dart_disclosures_cached(ticker):
-    """정량 스코어카드의 공시 이벤트 타임라인용 — 최근 6개월 공시 목록."""
-    corp_code = fetch_dart_corp_map().get(ticker)
-    if not corp_code:
-        return []
-    end_dt = datetime.now()
-    start_dt = end_dt - pd.Timedelta(days=DISCLOSURE_LOOKBACK_DAYS)
-    return fetch_dart.fetch_disclosures(corp_code, start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'))
 
 
 # 표시는 최근 60거래일이지만 주말·공휴일을 감안해 넉넉히 받아온 뒤 뒤에서 자른다.
@@ -1392,8 +1390,8 @@ def _render_growth_metrics(items, period_type):
 PRICE_5Y_LOOKBACK_DAYS = 5 * 365  # 정량 스코어카드 "개요" 탭 맨 아래 5년 주가 흐름 차트용
 
 MA_WINDOWS = (20, 60, 120)
-MA_LOOKBACK_DAYS = 420  # 120일 이동평균이 초반부터 안정되도록 넉넉히 받고, 표시는 최근 180거래일만
-MA_DISPLAY_DAYS = 180
+MA_DISPLAY_DAYS = 3 * 365  # 이동평균·이격도·RSI·MACD 통합 그래프 표시 기간 — 최근 3년
+MA_LOOKBACK_DAYS = MA_DISPLAY_DAYS + 150  # 120일 이동평균이 표시 구간 초반부터 안정되도록 여유를 더 받는다
 
 
 BB_WINDOW = 20
@@ -1492,13 +1490,11 @@ def _render_moving_average_section(ticker, selected_name):
         )
         for label in ('BB상단', 'BB하단')
     ]
-    chart = alt.layer(price_line, *ma_lines, *bb_lines).properties(height=320).interactive()
+    chart = alt.layer(price_line, *ma_lines, *bb_lines).properties(height=380).interactive()
 
-    ma_chart_col, _ = st.columns(2)
-    with ma_chart_col:
-        st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, use_container_width=True)
     st.caption(
-        f'{selected_name} 주가와 이동평균선·볼린저밴드(20일선 ± 2표준편차). 최근 180거래일만 '
+        f'{selected_name} 주가와 이동평균선·볼린저밴드(20일선 ± 2표준편차). 최근 3년치를 '
         '표시하되, 지표 자체는 그 이전 데이터까지 포함해 계산합니다.'
     )
 
@@ -1511,75 +1507,83 @@ def _render_moving_average_section(ticker, selected_name):
     st.caption('이격도 = (현재가 − 이동평균) / 이동평균 × 100. 양수면 이동평균 위, 음수면 아래에 있다는 뜻입니다.')
 
     st.divider()
-    rsi_col, macd_col = st.columns(2)
-
-    with rsi_col:
-        st.markdown('###### RSI(14, Relative Strength Index, 상대강도지수)')
-        st.caption('최근 가격 상승압력과 하락압력의 상대적 크기를 0~100 사이 숫자로 나타낸 지표입니다.')
-        rsi_chart_df = display_df[['Date', 'RSI']].dropna()
-        if rsi_chart_df.empty:
-            st.info('RSI를 계산할 만큼 데이터가 충분하지 않습니다.')
-        else:
-            rsi_line = (
-                alt.Chart(rsi_chart_df)
-                .mark_line(color=SWISS_GREEN)
-                .encode(
-                    x=alt.X('Date:T', title=None),
-                    y=alt.Y('RSI:Q', title=None, scale=alt.Scale(domain=[0, 100])),
-                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('RSI:Q', format='.1f')],
-                )
+    st.markdown('###### RSI(14, Relative Strength Index, 상대강도지수)')
+    st.caption('최근 가격 상승압력과 하락압력의 상대적 크기를 0~100 사이 숫자로 나타낸 지표입니다.')
+    rsi_chart_df = display_df[['Date', 'RSI']].dropna()
+    if rsi_chart_df.empty:
+        st.info('RSI를 계산할 만큼 데이터가 충분하지 않습니다.')
+    else:
+        rsi_line = (
+            alt.Chart(rsi_chart_df)
+            .mark_line(color=SWISS_GREEN)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('RSI:Q', title=None, scale=alt.Scale(domain=[0, 100])),
+                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('RSI:Q', format='.1f')],
             )
-            rsi_bands = (
-                alt.Chart(pd.DataFrame({'y': [30, 70]}))
-                .mark_rule(strokeDash=[2, 2], color=SWISS_GRAY)
-                .encode(y='y:Q')
-            )
-            st.altair_chart((rsi_bands + rsi_line).properties(height=200).interactive(), use_container_width=True)
-            latest_rsi = rsi_chart_df['RSI'].iloc[-1]
-            rsi_label = '과매수' if latest_rsi >= 70 else ('과매도' if latest_rsi <= 30 else '중립')
-            st.metric('현재 RSI', f'{latest_rsi:.1f} ({rsi_label})', delta_color='off')
-            st.caption('70 이상 과매수, 30 이하 과매도로 흔히 해석합니다(점선 기준선).')
+        )
+        rsi_bands = (
+            alt.Chart(pd.DataFrame({'y': [30, 70]}))
+            .mark_rule(strokeDash=[2, 2], color=SWISS_GRAY)
+            .encode(y='y:Q')
+        )
+        st.altair_chart((rsi_bands + rsi_line).properties(height=220).interactive(), use_container_width=True)
+        latest_rsi = rsi_chart_df['RSI'].iloc[-1]
+        rsi_label = '과매수' if latest_rsi >= 70 else ('과매도' if latest_rsi <= 30 else '중립')
+        st.metric('현재 RSI', f'{latest_rsi:.1f} ({rsi_label})', delta_color='off')
+        st.markdown(
+            '- **70 이상 (과매수)** — 최근 많이 올라 단기 조정 가능성을 흔히 경계하는 구간\n'
+            '- **30 이하 (과매도)** — 최근 많이 내려 단기 반등 가능성을 흔히 기대하는 구간\n'
+            '- **50 부근** — 상승압력과 하락압력이 비슷한 중립 구간, 50 위/아래로 추세 방향을 가늠하기도 함\n'
+            '- 주가는 신고가를 갱신하는데 RSI는 이전 고점을 못 넘으면("다이버전스") 상승 동력이 약해지고 있다는 신호로 보기도 합니다'
+        )
 
-    with macd_col:
-        st.markdown('###### MACD(12, 26, 9, Moving Average Convergence Divergence, 이동평균수렴확산지수)')
-        st.caption('단기 이동평균과 장기 이동평균의 차이로 추세 전환을 포착하는 지표입니다.')
-        macd_chart_df = display_df[['Date', 'MACD', 'MACD_signal', 'MACD_hist']].dropna()
-        if macd_chart_df.empty:
-            st.info('MACD를 계산할 만큼 데이터가 충분하지 않습니다.')
-        else:
-            macd_scale = alt.Scale(domain=['MACD', '시그널', '히스토그램'], range=[SWISS_GREEN, SWISS_WHITE, SWISS_GRAY])
-            macd_legend = alt.Legend(title=None)
-            macd_bar = (
-                alt.Chart(macd_chart_df.assign(구분='히스토그램'))
-                .mark_bar(opacity=0.5)
-                .encode(
-                    x=alt.X('Date:T', title=None),
-                    y=alt.Y('MACD_hist:Q', title=None),
+    st.divider()
+    st.markdown('###### MACD(12, 26, 9, Moving Average Convergence Divergence, 이동평균수렴확산지수)')
+    st.caption('단기 이동평균과 장기 이동평균의 차이로 추세 전환을 포착하는 지표입니다.')
+    macd_chart_df = display_df[['Date', 'MACD', 'MACD_signal', 'MACD_hist']].dropna()
+    if macd_chart_df.empty:
+        st.info('MACD를 계산할 만큼 데이터가 충분하지 않습니다.')
+    else:
+        macd_scale = alt.Scale(domain=['MACD', '시그널', '히스토그램'], range=[SWISS_GREEN, SWISS_WHITE, SWISS_GRAY])
+        macd_legend = alt.Legend(title=None)
+        macd_bar = (
+            alt.Chart(macd_chart_df.assign(구분='히스토그램'))
+            .mark_bar(opacity=0.5)
+            .encode(
+                x=alt.X('Date:T', title=None),
+                y=alt.Y('MACD_hist:Q', title=None),
+                color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
+                tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_hist:Q', title='히스토그램', format=',.0f')],
+            )
+        )
+        macd_line = (
+            alt.Chart(macd_chart_df.assign(구분='MACD'))
+            .mark_line()
+            .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD:Q', title=None),
                     color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
-                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_hist:Q', title='히스토그램', format=',.0f')],
-                )
-            )
-            macd_line = (
-                alt.Chart(macd_chart_df.assign(구분='MACD'))
-                .mark_line()
-                .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD:Q', title=None),
-                        color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
-                        tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD:Q', format=',.0f')])
-            )
-            signal_line = (
-                alt.Chart(macd_chart_df.assign(구분='시그널'))
-                .mark_line(strokeDash=[3, 2])
-                .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD_signal:Q', title=None),
-                        color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
-                        tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_signal:Q', title='시그널', format=',.0f')])
-            )
-            st.altair_chart(
-                (macd_bar + macd_line + signal_line).properties(height=200).interactive(), use_container_width=True
-            )
-            latest = macd_chart_df.iloc[-1]
-            cross_label = 'MACD가 시그널선 위 (상승 모멘텀)' if latest['MACD'] >= latest['MACD_signal'] else 'MACD가 시그널선 아래 (하락 모멘텀)'
-            st.metric('MACD − 시그널', f"{latest['MACD_hist']:+,.0f}", delta_color='off')
-            st.caption(cross_label)
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD:Q', format=',.0f')])
+        )
+        signal_line = (
+            alt.Chart(macd_chart_df.assign(구분='시그널'))
+            .mark_line(strokeDash=[3, 2])
+            .encode(x=alt.X('Date:T', title=None), y=alt.Y('MACD_signal:Q', title=None),
+                    color=alt.Color('구분:N', scale=macd_scale, legend=macd_legend),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('MACD_signal:Q', title='시그널', format=',.0f')])
+        )
+        st.altair_chart(
+            (macd_bar + macd_line + signal_line).properties(height=220).interactive(), use_container_width=True
+        )
+        latest = macd_chart_df.iloc[-1]
+        cross_label = 'MACD가 시그널선 위 (상승 모멘텀)' if latest['MACD'] >= latest['MACD_signal'] else 'MACD가 시그널선 아래 (하락 모멘텀)'
+        st.metric('MACD − 시그널', f"{latest['MACD_hist']:+,.0f}", delta_color='off')
+        st.caption(f'현재: {cross_label}')
+        st.markdown(
+            '- **골든크로스** — MACD가 시그널선을 아래에서 위로 뚫고 올라가면 매수 신호로 흔히 해석\n'
+            '- **데드크로스** — MACD가 시그널선을 위에서 아래로 뚫고 내려가면 매도 신호로 흔히 해석\n'
+            '- **0선 위/아래** — MACD가 0보다 위면 단기 이동평균이 장기 이동평균 위(상승추세), 아래면 그 반대\n'
+            '- **히스토그램(막대)** — MACD와 시그널선의 차이. 막대가 커지면 모멘텀이 강해지고, 작아지면 모멘텀이 약해진다는 뜻'
+        )
 
 
 def render_stock_detail_panel():
@@ -1939,36 +1943,33 @@ def _build_indicator_table(rows):
     ]).set_index('지표')
 
 
-def _build_ratio_trend_chart(ratios_by_year):
+def _build_ratio_trend_chart(balance_ratios_by_year, interest_ratios_by_year):
     """부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율의 5개년 추이를
-    지표별 작은 꺾은선 그래프 6개(3열 그리드, 각자 독립된 y축)로 만든다.
-    단위가 서로 달라(%, 배) 한 차트에 같이 그리면 비교가 안 되므로 나눴다.
-    ROA는 DART가 안 줘서 순이익률×총자산회전율로 근사 계산한다.
-    ratios_by_year: {연도: fetch_dart.fetch_financial_ratios() 결과 dict}."""
-    years = sorted(ratios_by_year.keys())
-    if not years:
+    지표별 꺾은선 그래프 6개(3열 그리드, 각자 독립된 y축)로 만든다. 단위가
+    서로 달라(%, 배) 한 차트에 같이 그리면 비교가 안 되므로 나눴다. 5개 지표는
+    fetch_dart_balance_ratios_5y_cached(원본 재무제표 계산, 이력이 김)를 쓰고
+    이자보상배율만 fetch_dart_financial_ratios_5y_cached(fnlttSinglIndx, 이력이
+    짧음)를 쓴다 — 이자비용 계정명이 회사마다 달라 원본에서 직접 계산하지 않는다."""
+    balance_years = set(balance_ratios_by_year.keys())
+    interest_years = set(interest_ratios_by_year.keys())
+    if not balance_years and not interest_years:
         return None
 
-    def _roa(y):
-        r = ratios_by_year[y]
-        nm, at = r.get('net_margin'), r.get('asset_turnover')
-        return nm * at / 100 if nm is not None and at is not None else None
-
     specs = [
-        ('부채비율 (%)', lambda y: ratios_by_year[y].get('debt_ratio')),
-        ('유동비율 (%)', lambda y: ratios_by_year[y].get('current_ratio')),
-        ('이자보상배율 (배)', lambda y: ratios_by_year[y].get('interest_coverage')),
-        ('ROE (%)', lambda y: ratios_by_year[y].get('roe')),
-        ('ROA (%)', _roa),
-        (
-            '총자산회전율 (배)',
-            lambda y: (ratios_by_year[y]['asset_turnover'] / 100) if ratios_by_year[y].get('asset_turnover') is not None else None,
-        ),
+        ('부채비율 (%)', balance_ratios_by_year, 'debt_ratio'),
+        ('유동비율 (%)', balance_ratios_by_year, 'current_ratio'),
+        ('이자보상배율 (배)', interest_ratios_by_year, 'interest_coverage'),
+        ('ROE (%)', balance_ratios_by_year, 'roe'),
+        ('ROA (%)', balance_ratios_by_year, 'roa'),
+        ('총자산회전율 (배)', balance_ratios_by_year, 'asset_turnover_ratio'),
     ]
     rows = []
-    for label, value_fn in specs:
-        for year in years:
-            v = value_fn(year)
+    for label, source, key in specs:
+        for year, values in source.items():
+            v = values.get(key)
+            if key == 'asset_turnover_ratio':
+                v = values.get('asset_turnover')
+                v = v / 100 if v is not None else None
             if v is not None:
                 rows.append({'연도': str(year), '지표': label, '값': v})
     if not rows:
@@ -1976,13 +1977,13 @@ def _build_ratio_trend_chart(ratios_by_year):
 
     chart = (
         alt.Chart(pd.DataFrame(rows))
-        .mark_line(point=True, color=SWISS_GREEN)
+        .mark_line(point=True, color=SWISS_GREEN, strokeWidth=2.5)
         .encode(
             x=alt.X('연도:N', title=None),
             y=alt.Y('값:Q', title=None),
             tooltip=[alt.Tooltip('연도:N'), alt.Tooltip('지표:N'), alt.Tooltip('값:Q', format=',.2f')],
         )
-        .properties(height=150, width=180)
+        .properties(height=220, width=260)
         .facet(facet=alt.Facet('지표:N', title=None), columns=3)
         .resolve_scale(y='independent')
     )
@@ -2249,19 +2250,25 @@ def render_quant_scorecard():
         st.divider()
         st.markdown('###### 5개년 추이')
         try:
-            ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
+            interest_ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
         except Exception:
-            ratios_by_year = {}
-        ratio_trend_chart = _build_ratio_trend_chart(ratios_by_year)
+            interest_ratios_by_year = {}
+        try:
+            balance_ratios_by_year = fetch_dart_balance_ratios_5y_cached(ticker)
+        except Exception:
+            balance_ratios_by_year = {}
+        ratio_trend_chart = _build_ratio_trend_chart(balance_ratios_by_year, interest_ratios_by_year)
         if ratio_trend_chart is None:
             st.caption('5개년 추이를 계산할 데이터를 찾지 못했습니다.')
         else:
             st.altair_chart(ratio_trend_chart, use_container_width=True)
             st.markdown(
-                '- 부채비율·유동비율·이자보상배율·ROE·ROA·총자산회전율의 최근 5개 사업연도 추이입니다\n'
+                '- 부채비율·유동비율·ROE·ROA·총자산회전율의 최근 5개 사업연도 추이입니다 (원본 재무제표에서 직접 계산)\n'
+                '- 이자보상배율은 이자비용 계정명이 회사마다 달라 DART가 계산해주는 값을 그대로 쓰는데, 최근 1~2개년치만 '
+                '있는 경우가 많아 다른 지표보다 점이 적을 수 있습니다\n'
                 '- PER·PBR은 시가 기준이라 연도별 이력을 안정적으로 구할 무료 API가 없어 이 그래프에서는 빠졌습니다 '
                 '(위 "현재 지표"의 오늘 기준 값만 제공)\n'
-                '- 출처: DART 사업보고서 재무지표(하루 캐시)'
+                '- 출처: DART 사업보고서 재무제표·재무지표(하루 캐시)'
             )
 
         if len(cfo_list) >= 1:
@@ -2353,27 +2360,26 @@ def render_quant_scorecard():
         st.caption('출처: DART 증자(감자) 현황 · 최대주주 현황, 하루 캐시.')
 
         st.divider()
-        st.markdown('###### 최근 공시 (6개월)')
+        st.markdown(f'###### {name} 관련 주요 뉴스')
         try:
-            disclosures = fetch_dart_disclosures_cached(ticker)
+            news_df = get_news_df()
         except Exception:
-            disclosures = []
-        if not disclosures:
-            st.caption('최근 6개월 내 공시 내역을 찾지 못했습니다.')
+            news_df = pd.DataFrame()
+        related_news = pd.DataFrame()
+        if not news_df.empty and 'title' in news_df.columns:
+            related_news = news_df[news_df['title'].str.contains(name, case=False, na=False, regex=False)]
+            related_news = related_news.sort_values('published_at', ascending=False)
+        if related_news.empty:
+            st.caption(f'{name} 관련 뉴스를 찾지 못했습니다.')
         else:
-            lines = []
-            for d in disclosures[:30]:
-                date_str = d.get('rcept_dt') or ''
-                date_fmt = f'{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}' if len(date_str) == 8 else date_str
-                report_nm = d.get('report_nm', '')
-                highlighted = any(kw in report_nm for kw in DISCLOSURE_HIGHLIGHT_KEYWORDS)
-                prefix = '🔴' if highlighted else '•'
-                lines.append(f'{prefix} `{date_fmt}` {report_nm}')
-            st.markdown('\n'.join(lines))
-            st.caption(
-                f'최근 {len(disclosures)}건 중 최신 30건 표시 · 🔴 = 증자·전환사채·최대주주변경·합병분할 등 주요 이벤트 · '
-                '출처: DART 공시검색, 하루 캐시.'
-            )
+            render_news_list(related_news)
+        st.markdown(
+            '- "환율 및 뉴스" 탭이 모으는 RSS 피드 기사 제목에 종목명이 들어간 것만 걸러 보여줍니다 '
+            '(대략 최근 24시간 이내 · 국내외 뉴스 통합)\n'
+            '- 종목명이 기사 제목에 그대로 안 들어가면(축약어, 영문 표기 등) 실제로 관련 있어도 안 뜰 수 있습니다\n'
+            '- 전문 뉴스 검색이 아니라 이미 수집 중인 일반 경제 RSS를 재사용한 결과라 보도량이 적은 종목은 뜨는 기사가 거의 없을 수 있습니다\n'
+            '- 출처: RSS 피드 (fetch_news.py)'
+        )
 
 
 def render_stock_opinion_tab():

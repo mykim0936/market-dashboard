@@ -334,28 +334,6 @@ def fetch_operating_cashflow(corp_code, bsns_year):
     return []
 
 
-def fetch_disclosures(corp_code, bgn_de, end_de, page_count=100):
-    """최근 공시 목록(제목/일자/제출인)을 가져온다(공시검색 API, list.json).
-    최대 page_count건까지 한 페이지로 받는다 — 6개월치는 보통 이 안에 다 들어온다.
-    반환: [{'report_nm':, 'rcept_dt':, 'flr_nm':, 'rcept_no':}] (DART가 주는 최신순
-    그대로) — 그 기간에 공시가 없거나 조회 실패 시 []."""
-    rows = _get('list.json', {
-        'corp_code': corp_code, 'bgn_de': bgn_de, 'end_de': end_de,
-        'page_no': 1, 'page_count': page_count,
-    })
-    if not rows:
-        return []
-    return [
-        {
-            'report_nm': (r.get('report_nm') or '').strip(),
-            'rcept_dt': r.get('rcept_dt'),
-            'flr_nm': r.get('flr_nm'),
-            'rcept_no': r.get('rcept_no'),
-        }
-        for r in rows
-    ]
-
-
 def fetch_capital_changes(corp_code, bsns_year):
     """유상증자·무상증자·전환사채(CB) 전환·주식매수선택권 행사 등 자본금 변동
     이력(증자·감자 현황, irdsSttus.json). 반환: [{'date':, 'type':, 'qty':}]
@@ -441,3 +419,65 @@ def fetch_major_shareholder_trades(corp_code):
             'reason': r.get('report_resn'), 'stake_change_pct': change,
         })
     return items
+
+
+# 재무상태표(BS)·손익계산서(IS) 표준계정 -> 우리가 쓰는 키. fnlttSinglIndx.json
+# ("단일회사 주요 재무지표")은 idx_cl_code별로 계산해서 주지만 회사에 따라 최근
+# 1~2개년만 있는 경우가 많다(2026-08 확인, 카카오는 2023~2025년만 있고 그 이전은
+# "조회된 데이터가 없습니다"). 반면 원본 재무제표(BS/IS 표준계정)는 훨씬 더
+# 오래전까지 있어서, 부채비율/유동비율/ROE/ROA/총자산회전율은 이 원본 계정에서
+# 직접 계산하는 쪽이 더 긴 이력을 준다. 이자보상배율만 예외 — 이자비용 계정명이
+# 회사마다 제각각이라 fnlttSinglIndx 값을 그대로 쓴다(fetch_financial_ratios).
+_BS_IS_ACCOUNT_MAP = {
+    '부채총계': 'debt', '자본총계': 'equity', '유동자산': 'current_assets',
+    '유동부채': 'current_liab', '자산총계': 'total_assets',
+    '당기순이익(손실)': 'net_income', '매출액': 'revenue',
+}
+
+
+def fetch_balance_sheet_ratios(corp_code, bsns_year):
+    """부채비율·유동비율·ROE·ROA·총자산회전율 계산에 필요한 원시 재무제표 계정을
+    사업보고서 1회 조회로 최근 3개년치 받는다(전체 재무제표 API,
+    fetch_operating_cashflow와 같은 "당기/전기/전전기 한 번에" 패턴). 반환:
+    {연도: {'debt_ratio':, 'current_ratio':, 'roe':, 'roa':, 'asset_turnover':}}
+    (asset_turnover는 fetch_financial_ratios의 total_asset_turnover와 단위를
+    맞추려고 %로 반환 — 예: 30.245는 회전율 0.30배) — 계정을 못 찾으면 {}."""
+    for fs_div in ('CFS', 'OFS'):
+        rows = _get('fnlttSinglAcntAll.json', {
+            'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011', 'fs_div': fs_div,
+        })
+        if not rows:
+            continue
+        found = {}
+        for r in rows:
+            key = _BS_IS_ACCOUNT_MAP.get(r.get('account_nm'))
+            if key is None or key in found or r.get('sj_div') not in ('BS', 'IS'):
+                continue
+            found[key] = r
+        if not all(k in found for k in ('debt', 'equity', 'current_assets', 'current_liab', 'total_assets')):
+            continue
+
+        by_year = {}
+        for amount_key, year_offset in (('thstrm_amount', 0), ('frmtrm_amount', 1), ('bfefrmtrm_amount', 2)):
+            year = int(bsns_year) - year_offset
+            vals = {field: _to_amount(row, amount_key) for field, row in found.items()}
+            debt, equity = vals.get('debt'), vals.get('equity')
+            cur_assets, cur_liab = vals.get('current_assets'), vals.get('current_liab')
+            total_assets, net_income, revenue = vals.get('total_assets'), vals.get('net_income'), vals.get('revenue')
+
+            ratios = {}
+            if debt is not None and equity:
+                ratios['debt_ratio'] = debt / equity * 100
+            if cur_assets is not None and cur_liab:
+                ratios['current_ratio'] = cur_assets / cur_liab * 100
+            if net_income is not None and equity:
+                ratios['roe'] = net_income / equity * 100
+            if net_income is not None and total_assets:
+                ratios['roa'] = net_income / total_assets * 100
+            if revenue is not None and total_assets:
+                ratios['asset_turnover'] = revenue / total_assets * 100
+            if ratios:
+                by_year[year] = ratios
+        if by_year:
+            return by_year
+    return {}
