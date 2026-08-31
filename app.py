@@ -785,16 +785,16 @@ def fetch_dart_quarterly_financials_cached(ticker):
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
-def fetch_dart_quarterly_financials_3y_cached(ticker):
-    """정량 스코어카드용 — 최근 3년(최대 12개 분기) 매출액·영업이익(억원).
-    기존 종목 상세 패널(fetch_dart_quarterly_financials_cached, 2년/8분기)과는
-    호출부가 달라 별도로 캐시한다."""
+def fetch_dart_quarterly_financials_5y_cached(ticker):
+    """"종목 분석" 2단계(추이 분석)용 — 최근 5년(최대 20개 분기) 매출액·영업이익
+    (억원). 6개년치를 요청해서 올해가 아직 1분기뿐이어도 20개 분기를 채운다."""
     corp_code = fetch_dart_corp_map().get(ticker)
     if not corp_code:
         return [], None
     this_year = datetime.now().year
-    items, fs_div = fetch_dart.fetch_quarterly_financials(corp_code, [this_year, this_year - 1, this_year - 2])
-    return items[-12:], fs_div
+    bsns_years = [this_year - i for i in range(6)]
+    items, fs_div = fetch_dart.fetch_quarterly_financials(corp_code, bsns_years)
+    return items[-20:], fs_div
 
 
 @st.cache_data(ttl=PER_TTL_SEC)
@@ -2359,6 +2359,159 @@ def _build_cfo_oi_chart(cfo_list, oi_by_year):
     )
 
 
+def _build_trend_commentary(annual_years, quarterly_items):
+    """2단계(추이 분석)용 — 5개년·20분기 숫자를 문장으로 풀어준다. 표·차트만
+    보고 방향을 스스로 읽어야 했던 걸, "그래서 늘었다는 거야 줄었다는 거야"를
+    바로 알 수 있게 한다."""
+    lines = []
+    full_years = [y for y in annual_years if not y.get('partial')]
+    if len(full_years) >= 2:
+        first, last = full_years[0], full_years[-1]
+        rev_first, rev_last = first.get('revenue'), last.get('revenue')
+        oi_first, oi_last = first.get('operating_income'), last.get('operating_income')
+        if rev_first and rev_last is not None:
+            chg = (rev_last - rev_first) / abs(rev_first) * 100
+            direction = '증가' if chg > 0 else ('감소' if chg < 0 else '보합')
+            lines.append(
+                f"매출액은 {first['year']}년 {rev_first:,.0f}억원에서 {last['year']}년 {rev_last:,.0f}억원으로 "
+                f'{direction}했습니다 ({chg:+.1f}%, {len(full_years)}개년 기준).'
+            )
+        if oi_first is not None and oi_last is not None and oi_first != 0:
+            chg = (oi_last - oi_first) / abs(oi_first) * 100
+            direction = '증가' if chg > 0 else ('감소' if chg < 0 else '보합')
+            lines.append(
+                f"영업이익은 {first['year']}년 {oi_first:,.0f}억원에서 {last['year']}년 {oi_last:,.0f}억원으로 "
+                f'{direction}했습니다 ({chg:+.1f}%).'
+            )
+        if rev_first and rev_last and oi_first is not None and oi_last is not None and rev_first > 0 and rev_last > 0:
+            m_first, m_last = oi_first / rev_first * 100, oi_last / rev_last * 100
+            verb = '개선' if m_last > m_first else ('악화' if m_last < m_first else '유지')
+            lines.append(f"영업이익률은 {first['year']}년 {m_first:.1f}%에서 {last['year']}년 {m_last:.1f}%로 {verb}됐습니다.")
+
+    if len(quarterly_items) >= 8:
+        recent4, first4 = quarterly_items[-4:], quarterly_items[:4]
+
+        def _avg(items, key):
+            vals = [it[key] for it in items if it.get(key) is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        rev_recent, rev_first = _avg(recent4, 'revenue'), _avg(first4, 'revenue')
+        if rev_recent is not None and rev_first:
+            chg = (rev_recent - rev_first) / abs(rev_first) * 100
+            lines.append(
+                f'최근 4개 분기 평균 매출({rev_recent:,.0f}억원)은 {len(quarterly_items)}분기 전 4개 분기 평균'
+                f"({rev_first:,.0f}억원) 대비 {chg:+.1f}% {'증가' if chg > 0 else '감소'}했습니다."
+            )
+
+    if not lines:
+        return None
+    return '\n'.join(f'- {line}' for line in lines)
+
+
+def _sector_rank_text(label, value, universe_col, universe, industry_name, ticker):
+    """3단계(경쟁사 비교)용 — "업종 N개 종목 중 값이 낮은 순으로 몇 등(하위 몇%)"
+    형태로 순위를 매긴다. 값이 낮을수록 저평가로 보는 PER/PBR용 — 순위가 낮을수록
+    저평가 쪽이라는 뜻이라, 그대로 "낮은 순 등수"를 보여주는 게 제일 직관적이다."""
+    if value is None or universe is None or universe.empty or not industry_name:
+        return None
+    if universe_col not in universe.columns or '업종명' not in universe.columns:
+        return None
+    peers = universe[(universe['업종명'] == industry_name) & (universe[universe_col] > 0)]
+    if peers.empty:
+        return None
+    peer_vals = peers[universe_col]
+    rank = int((peer_vals < value).sum()) + 1
+    total = len(peer_vals) + (0 if ticker in peer_vals.index else 1)
+    pct = rank / total * 100
+    return f'{label} 기준 {industry_name} 업종 {total}개 종목 중 낮은 순으로 {rank}위(하위 {pct:.0f}%) — 낮을수록 저평가 쪽입니다.'
+
+
+def _derive_investment_signals(ctx):
+    """4단계(투자 신호)용 — 이미 계산된 값들만으로 최대 3개 긍정 + 3개 부정 신호를
+    우선순위(밸류에이션 → 재무건전성 → 수익성 → 성장성 → 모멘텀 → 지배구조) 순으로
+    뽑는다. 조건에 안 맞으면 그 신호는 그냥 빠진다 — 억지로 3개씩 채우지 않는다."""
+    positives, negatives = [], []
+
+    per, industry_per = ctx.get('per'), ctx.get('industry_per')
+    if per is not None and industry_per and industry_per > 0:
+        ratio = per / industry_per
+        if ratio < 0.8:
+            positives.append(f'PER {per:.1f}배로 업종 평균({industry_per:.1f}배) 대비 저평가 상태입니다.')
+        elif ratio > 1.2:
+            negatives.append(f'PER {per:.1f}배로 업종 평균({industry_per:.1f}배) 대비 고평가 상태입니다.')
+
+    debt_ratio = ctx.get('debt_ratio')
+    if debt_ratio is not None:
+        if debt_ratio < 100:
+            positives.append(f'부채비율 {debt_ratio:.0f}%로 재무구조가 안정적입니다.')
+        elif debt_ratio > 200:
+            negatives.append(f'부채비율 {debt_ratio:.0f}%로 재무 부담이 큽니다.')
+
+    interest_coverage = ctx.get('interest_coverage')
+    if interest_coverage is not None and interest_coverage < 1:
+        negatives.append(f'이자보상배율 {interest_coverage:.1f}배로 영업이익으로 이자비용도 못 감당합니다.')
+
+    roe = ctx.get('roe')
+    if roe is not None:
+        if roe >= 15:
+            positives.append(f'ROE {roe:.1f}%로 자기자본 대비 수익성이 우수합니다.')
+        elif roe < 5:
+            negatives.append(f'ROE {roe:.1f}%로 자기자본 대비 수익성이 저조합니다.')
+
+    revenue_yoy, oi_yoy = ctx.get('revenue_yoy'), ctx.get('oi_yoy')
+    if revenue_yoy is not None and oi_yoy is not None:
+        if revenue_yoy > 0 and oi_yoy > 0:
+            positives.append(f'매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}%로 동반 성장 중입니다.')
+        elif revenue_yoy < 0 and oi_yoy < 0:
+            negatives.append(f'매출 {revenue_yoy:+.1f}%, 영업이익 {oi_yoy:+.1f}%로 동반 역성장 중입니다.')
+        elif revenue_yoy > 0 and oi_yoy < 0:
+            negatives.append(f'매출은 {revenue_yoy:+.1f}% 늘었지만 영업이익은 {oi_yoy:+.1f}% 줄어 마진이 악화되고 있습니다.')
+
+    pos_52w = ctx.get('pos_52w')
+    if pos_52w is not None:
+        if pos_52w <= 20:
+            positives.append(f'52주 구간의 하위 {pos_52w:.0f}% 지점(저점권)에 있습니다.')
+        elif pos_52w >= 80:
+            negatives.append(f'52주 구간의 상위 {100 - pos_52w:.0f}% 지점(고점권)에 있어 추격 매수에 주의가 필요합니다.')
+
+    if ctx.get('dilution_score') == 1:
+        positives.append('최근 1년 내 유상증자·전환사채 전환 등 지분 희석 이벤트가 없습니다.')
+    elif ctx.get('dilution_score') == -1:
+        negatives.append('최근 1년 내 지분 희석 이벤트가 있었습니다 — 지분 희석 가능성을 확인해보세요.')
+
+    if ctx.get('cfo_gap_warning'):
+        negatives.append('최근 영업활동현금흐름이 영업이익보다 지속적으로 적어 "이익의 질"이 우려됩니다.')
+
+    return positives[:3], negatives[:3]
+
+
+def _build_overall_assessment(ctx):
+    """5단계(종합 평가)용 — 점수를 다시 매기지 않고("종합판정"은 앞서 없앴다),
+    긍정/부정 신호 개수만으로 문장 하나짜리 결론을 만들고, 이번 조회에서
+    데이터가 비어 있던 항목들을 "추가로 확인이 필요한 사항"으로 모은다."""
+    positives, negatives = ctx['positives'], ctx['negatives']
+    if len(positives) > len(negatives):
+        lean = '전반적으로 긍정적 요인이 더 많이 관찰됩니다.'
+    elif len(negatives) > len(positives):
+        lean = '전반적으로 주의가 필요한 요인이 더 많이 관찰됩니다.'
+    else:
+        lean = '긍정적 요인과 주의 요인이 비슷하게 섞여 있습니다.'
+
+    follow_ups = []
+    if ctx.get('interest_coverage') is None:
+        follow_ups.append('이자보상배율 데이터가 없어 이자비용 감당 능력을 별도로 확인해볼 필요가 있습니다.')
+    if not ctx.get('related_news_found'):
+        follow_ups.append('최근 관련 뉴스가 확인되지 않아, 공시·이벤트 탭이나 증권사 리포트로 최신 동향을 따로 확인해보세요.')
+    if ctx.get('shareholder_pct') is None:
+        follow_ups.append('최대주주 지분율 데이터를 찾지 못해 지배구조 안정성을 별도로 확인해볼 필요가 있습니다.')
+    if ctx.get('per') is None:
+        follow_ups.append('PER을 계산할 EPS 데이터가 없어 밸류에이션 판단에 참고가 제한적입니다.')
+    if not follow_ups:
+        follow_ups.append('이번 조회에서는 크게 비어 있는 데이터가 없었습니다 — 그래도 아래 각 단계 탭의 세부 수치를 직접 한 번씩 확인해보세요.')
+
+    return lean, follow_ups
+
+
 def render_quant_scorecard():
     """OpenAI API 없이, PER/업계PER·재무 안정성·수급·기술·공시 데이터를 종목별로
     모아 보여준다. 보유 종목 여부와 무관하게 코스피·코스닥 상장 종목이면
@@ -2428,6 +2581,8 @@ def render_quant_scorecard():
 
     industry_name = row.get('industry_name')
     pbr = industry_pbr = None
+    universe = None  # 3단계(경쟁사 비교)의 업종 내 순위 계산에도 재사용 — market이
+    # KOSPI/KOSDAQ가 아니거나 조회가 실패해도 항상 정의돼 있도록 미리 None으로 둔다.
     if market in ('KOSPI', 'KOSDAQ'):
         try:
             universe = fetch_per_universe(market)
@@ -2441,6 +2596,7 @@ def render_quant_scorecard():
                     industry_pbr = peers['PBR'].median() if not peers.empty else None
         except Exception:
             pbr = industry_pbr = None
+            universe = None
 
     try:
         ratios = fetch_dart_financial_ratios_cached(ticker)
@@ -2458,7 +2614,7 @@ def render_quant_scorecard():
     peg = per / oi_yoy if per is not None and oi_yoy is not None and oi_yoy > 0 else None
 
     try:
-        quarterly_items, _ = fetch_dart_quarterly_financials_3y_cached(ticker)
+        quarterly_items, _ = fetch_dart_quarterly_financials_5y_cached(ticker)
     except Exception:
         quarterly_items = []
 
@@ -2474,20 +2630,79 @@ def render_quant_scorecard():
         shareholder = fetch_dart_largest_shareholder_cached(ticker)
     except Exception:
         shareholder = {}
+    try:
+        interest_ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
+    except Exception:
+        interest_ratios_by_year = {}
+    try:
+        balance_ratios_by_year = fetch_dart_balance_ratios_5y_cached(ticker)
+    except Exception:
+        balance_ratios_by_year = {}
+    net_income = None
+    if balance_ratios_by_year:
+        latest_bs_year = max(balance_ratios_by_year.keys())
+        net_income = balance_ratios_by_year[latest_bs_year].get('net_income')
+    try:
+        news_df = get_news_df()
+    except Exception:
+        news_df = pd.DataFrame()
+    related_news = pd.DataFrame()
+    if not news_df.empty and 'title' in news_df.columns:
+        related_news = news_df[news_df['title'].str.contains(name, case=False, na=False, regex=False)]
+        related_news = related_news.sort_values('published_at', ascending=False)
 
     stability_score, stability_text = _stability_signal(debt_ratio, interest_coverage)
     dilution_score, dilution_text = _dilution_signal(capital_changes)
+
+    oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
+    cfo_gap_years = [
+        item for item in cfo_list
+        if item.get('cfo') is not None and oi_by_year.get(item['year']) is not None
+        and item['cfo'] < oi_by_year[item['year']]
+    ]
+    cfo_gap_warning = len(cfo_list) >= 1 and len(cfo_gap_years) >= max(2, (len(cfo_list) + 1) // 2)
+
+    signal_ctx = {
+        'per': per, 'industry_per': industry_per, 'debt_ratio': debt_ratio,
+        'interest_coverage': interest_coverage, 'roe': roe,
+        'revenue_yoy': revenue_yoy, 'oi_yoy': oi_yoy, 'pos_52w': pos_52w,
+        'dilution_score': dilution_score, 'cfo_gap_warning': cfo_gap_warning,
+    }
+    positives, negatives = _derive_investment_signals(signal_ctx)
+    assessment_ctx = dict(signal_ctx)
+    assessment_ctx.update({
+        'positives': positives, 'negatives': negatives,
+        'related_news_found': not related_news.empty,
+        'shareholder_pct': shareholder.get('total_pct'),
+    })
+    overall_lean, follow_ups = _build_overall_assessment(assessment_ctx)
+
+    current_rows = [
+        ('PER (배)', per, '{:.1f}', *_peer_ratio_tier(per, industry_per, higher_is_better=False)),
+        ('PBR (배)', pbr, '{:.2f}', *_peer_ratio_tier(pbr, industry_pbr, higher_is_better=False)),
+        ('부채비율 (%)', debt_ratio, '{:.0f}', *_tier_and_icon(debt_ratio, 100, 200, higher_is_better=False)),
+        ('유동비율 (%)', current_ratio, '{:.0f}', *_tier_and_icon(current_ratio, 100, 200, higher_is_better=True)),
+        (
+            '이자보상배율 (배)', interest_coverage, '{:.1f}',
+            *_tier_and_icon(interest_coverage, 1, 3, higher_is_better=True),
+        ),
+        ('ROE (%)', roe, '{:.1f}', *_tier_and_icon(roe, 5, 15, higher_is_better=True)),
+        ('ROA (%)', roa, '{:.1f}', *_tier_and_icon(roa, 3, 8, higher_is_better=True)),
+        ('총자산회전율 (배)', asset_turnover, '{:.2f}', *_tier_and_icon(asset_turnover, 0.5, 1.5, higher_is_better=True)),
+    ]
 
     st.markdown(f'##### {name} ({ticker}) · {market or "-"}')
     if stability_score == -1 or dilution_score == -1:
         risk_lines = [t for t, s in zip((stability_text, dilution_text), (stability_score, dilution_score)) if s == -1]
         st.error('🚨 **주의: 재무·지배구조 위험 신호가 있습니다** — ' + ' / '.join(risk_lines))
 
-    tab_overview, tab_valuation, tab_flow, tab_events = st.tabs(
-        ['개요', '밸류에이션·재무 안정성', '수급·기술', '공시·이벤트']
-    )
+    tab_step1, tab_step2, tab_step3, tab_step4, tab_step5, tab_flow, tab_events = st.tabs([
+        '1단계 · 핵심 지표', '2단계 · 추이 분석', '3단계 · 경쟁사 비교',
+        '4단계 · 투자 신호', '5단계 · 종합 평가', '수급·기술', '공시·이벤트',
+    ])
 
-    with tab_overview:
+    with tab_step1:
+        st.markdown('###### 요약')
         c1, c2, c3, c4 = st.columns(4)
         c1.metric('현재가', f'{current_price:,.0f}원')
         c2.metric('PER', f'{per:.1f}배' if per is not None else '-')
@@ -2504,56 +2719,24 @@ def render_quant_scorecard():
             st.caption('🔔 52주 신저가 갱신 중입니다.')
         if vol_ratio is not None and vol_ratio >= VOLUME_SURGE_RATIO:
             st.caption(f'🔔 거래량: 20일 평균 대비 {vol_ratio:.1f}배로 급증했습니다.')
-        st.markdown(
-            '- **PER (Price Earnings Ratio, 주가수익비율)** — 주가 ÷ 주당순이익(EPS). 낮을수록 이익 대비 주가가 저렴하다는 뜻\n'
-            '- **MDD (Maximum Drawdown, 최대낙폭)** — 52주 최고가 대비 현재가가 얼마나 떨어졌는지\n'
-            '- **YoY (Year over Year, 전년동기대비)** — 작년 같은 기간과 비교한 증감률'
+
+        st.divider()
+        st.markdown('###### 핵심 재무 지표 (매출 · 영업이익 · 순이익 · 부채비율 · ROE)')
+        latest_annual = annual_years[-1] if annual_years else {}
+        f1, f2, f3, f4, f5 = st.columns(5)
+        f1.metric('매출액', f"{latest_annual['revenue']:,.0f}억원" if latest_annual.get('revenue') is not None else '-')
+        f2.metric(
+            '영업이익',
+            f"{latest_annual['operating_income']:,.0f}억원" if latest_annual.get('operating_income') is not None else '-',
         )
+        f3.metric('순이익', f'{net_income:,.0f}억원' if net_income is not None else '-')
+        f4.metric('부채비율', f'{debt_ratio:.0f}%' if debt_ratio is not None else '-')
+        f5.metric('ROE', f'{roe:.1f}%' if roe is not None else '-')
+        if latest_annual.get('year') is not None:
+            st.caption(f"{latest_annual['year']}년 사업보고서 기준(순이익·부채비율·ROE는 원본 재무제표에서 직접 계산) · 출처: DART")
 
-        if len(annual_years) >= 2:
-            st.divider()
-            chart_items = annual_years[-5:]
-            x_labels = [str(y['year']) for y in chart_items]
-            st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
-            st.caption('연도별 매출액·영업이익·영업이익률 · 출처: DART 사업보고서 (최근 5개년)')
-
-        if len(quarterly_items) >= 2:
-            st.divider()
-            q_x_labels = [f"{it['year']}년 {it['quarter']}분기" for it in quarterly_items]
-            st.altair_chart(_build_revenue_oi_chart(quarterly_items, q_x_labels), use_container_width=True)
-            st.caption('분기별 매출액·영업이익·영업이익률 · 출처: DART 분기/반기/사업보고서 (최근 3개년)')
-
-        if not price_5y_df.empty:
-            st.divider()
-            price_5y_chart = (
-                alt.Chart(price_5y_df[['Close']].reset_index())
-                .mark_line(color=NEUTRAL_CHART_COLOR)
-                .encode(
-                    x=alt.X('Date:T', title=None),
-                    y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
-                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
-                )
-                .properties(height=280)
-                .interactive()
-            )
-            st.altair_chart(price_5y_chart, use_container_width=True)
-            st.caption(f'{name} 최근 5년 주가 흐름 · 출처: FinanceDataReader')
-
-    with tab_valuation:
-        st.markdown('###### 현재 지표')
-        current_rows = [
-            ('PER (배)', per, '{:.1f}', *_peer_ratio_tier(per, industry_per, higher_is_better=False)),
-            ('PBR (배)', pbr, '{:.2f}', *_peer_ratio_tier(pbr, industry_pbr, higher_is_better=False)),
-            ('부채비율 (%)', debt_ratio, '{:.0f}', *_tier_and_icon(debt_ratio, 100, 200, higher_is_better=False)),
-            ('유동비율 (%)', current_ratio, '{:.0f}', *_tier_and_icon(current_ratio, 100, 200, higher_is_better=True)),
-            (
-                '이자보상배율 (배)', interest_coverage, '{:.1f}',
-                *_tier_and_icon(interest_coverage, 1, 3, higher_is_better=True),
-            ),
-            ('ROE (%)', roe, '{:.1f}', *_tier_and_icon(roe, 5, 15, higher_is_better=True)),
-            ('ROA (%)', roa, '{:.1f}', *_tier_and_icon(roa, 3, 8, higher_is_better=True)),
-            ('총자산회전율 (배)', asset_turnover, '{:.2f}', *_tier_and_icon(asset_turnover, 0.5, 1.5, higher_is_better=True)),
-        ]
+        st.divider()
+        st.markdown('###### 전체 지표 표')
         st.dataframe(_build_indicator_table(current_rows), use_container_width=True)
         st.caption(f'업종: {industry_name or "-"}')
         st.markdown(
@@ -2581,19 +2764,34 @@ def render_quant_scorecard():
             '- **PSR (Price Sales Ratio, 주가매출비율)** — 시가총액 ÷ 매출액. 적자라 PER을 못 구할 때 대안으로 씀 '
             '(이 페이지에서는 PER × 순이익률로 계산)\n'
             '- **PEG (Price Earnings to Growth Ratio, 주가수익성장비율)** — PER ÷ 영업이익 성장률(YoY). 성장성 대비 '
-            'PER이 비싼지 판단 — 1 미만이면 저평가, 1 초과면 고평가로 보는 게 일반적'
+            'PER이 비싼지 판단 — 1 미만이면 저평가, 1 초과면 고평가로 보는 게 일반적\n'
+            '- **YoY (Year over Year, 전년동기대비)** — 작년 같은 기간과 비교한 증감률\n'
+            '- **MDD (Maximum Drawdown, 최대낙폭)** — 52주 최고가 대비 현재가가 얼마나 떨어졌는지'
         )
 
+    with tab_step2:
+        st.markdown('###### 추이 해석')
+        commentary = _build_trend_commentary(annual_years, quarterly_items)
+        if commentary:
+            st.markdown(commentary)
+        else:
+            st.caption('추이를 해석할 만큼 연도별·분기별 데이터가 충분하지 않습니다.')
+
+        if len(annual_years) >= 2:
+            st.divider()
+            chart_items = annual_years[-5:]
+            x_labels = [str(y['year']) for y in chart_items]
+            st.altair_chart(_build_revenue_oi_chart(chart_items, x_labels), use_container_width=True)
+            st.caption('연도별 매출액·영업이익·영업이익률 · 출처: DART 사업보고서 (최근 5개년)')
+
+        if len(quarterly_items) >= 2:
+            st.divider()
+            q_x_labels = [f"{it['year']}년 {it['quarter']}분기" for it in quarterly_items]
+            st.altair_chart(_build_revenue_oi_chart(quarterly_items, q_x_labels), use_container_width=True)
+            st.caption(f'분기별 매출액·영업이익·영업이익률 · 최근 {len(quarterly_items)}개 분기 · 출처: DART 분기/반기/사업보고서')
+
         st.divider()
-        st.markdown('###### 5개년 추이')
-        try:
-            interest_ratios_by_year = fetch_dart_financial_ratios_5y_cached(ticker)
-        except Exception:
-            interest_ratios_by_year = {}
-        try:
-            balance_ratios_by_year = fetch_dart_balance_ratios_5y_cached(ticker)
-        except Exception:
-            balance_ratios_by_year = {}
+        st.markdown('###### 재무비율 5개년 추이')
         ratio_trend_chart = _build_ratio_trend_chart(balance_ratios_by_year, interest_ratios_by_year)
         if ratio_trend_chart is None:
             st.caption('5개년 추이를 계산할 데이터를 찾지 못했습니다.')
@@ -2604,27 +2802,21 @@ def render_quant_scorecard():
                 '- 이자보상배율은 이자비용 계정명이 회사마다 달라 DART가 계산해주는 값을 그대로 쓰는데, 최근 1~2개년치만 '
                 '있는 경우가 많아 다른 지표보다 점이 적을 수 있습니다\n'
                 '- PER·PBR은 시가 기준이라 연도별 이력을 안정적으로 구할 무료 API가 없어 이 그래프에서는 빠졌습니다 '
-                '(위 "현재 지표"의 오늘 기준 값만 제공)\n'
+                '(1단계 "전체 지표 표"의 오늘 기준 값만 제공)\n'
                 '- 출처: DART 사업보고서 재무제표·재무지표(하루 캐시)'
             )
 
         if len(cfo_list) >= 1:
             st.divider()
             st.markdown('###### 이익의 질 — 영업활동현금흐름 vs 영업이익 (최근 5개년)')
-            oi_by_year = {y['year']: y.get('operating_income') for y in annual_years}
             cfo_oi_chart = _build_cfo_oi_chart(cfo_list, oi_by_year)
             if cfo_oi_chart is None:
                 st.caption('이익의 질을 계산할 데이터를 찾지 못했습니다.')
             else:
                 st.altair_chart(cfo_oi_chart, use_container_width=True)
-                gap_years = [
-                    item for item in cfo_list
-                    if item.get('cfo') is not None and oi_by_year.get(item['year']) is not None
-                    and item['cfo'] < oi_by_year[item['year']]
-                ]
-                if len(gap_years) >= max(2, (len(cfo_list) + 1) // 2):
+                if cfo_gap_warning:
                     st.warning(
-                        '⚠️ 최근 5개년 중 절반 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
+                        '⚠️ 최근 몇 개년 중 절반 이상에서 영업활동현금흐름이 영업이익보다 적습니다 — '
                         '회계상 이익만큼 실제 현금이 들어오지 않고 있다는 뜻일 수 있어(매출채권 누적, 재고 증가 등) '
                         '"이익의 질"을 한번 확인해볼 필요가 있습니다.'
                     )
@@ -2635,6 +2827,60 @@ def render_quant_scorecard():
                     '주의 신호로 봅니다\n'
                     '- 출처: DART 사업보고서 전체 재무제표(현금흐름표), 하루 캐시'
                 )
+
+        if not price_5y_df.empty:
+            st.divider()
+            price_5y_chart = (
+                alt.Chart(price_5y_df[['Close']].reset_index())
+                .mark_line(color=NEUTRAL_CHART_COLOR)
+                .encode(
+                    x=alt.X('Date:T', title=None),
+                    y=alt.Y('Close:Q', title='주가(원)', scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip('Date:T'), alt.Tooltip('Close:Q', title='주가', format=',.0f')],
+                )
+                .properties(height=280)
+                .interactive()
+            )
+            st.altair_chart(price_5y_chart, use_container_width=True)
+            st.caption(f'{name} 최근 5년 주가 흐름 · 출처: FinanceDataReader')
+
+    with tab_step3:
+        st.markdown('###### 업종 내 상대 위치')
+        per_rank = _sector_rank_text('PER', per, 'PER', universe, industry_name, ticker)
+        pbr_rank = _sector_rank_text('PBR', pbr, 'PBR', universe, industry_name, ticker)
+        if per_rank:
+            st.markdown(f'- {per_rank}')
+        if pbr_rank:
+            st.markdown(f'- {pbr_rank}')
+        if not per_rank and not pbr_rank:
+            st.caption('업종 내 순위를 계산할 데이터가 부족합니다 (ETF이거나 업종 분류가 없는 종목일 수 있습니다).')
+        st.caption(f'업종: {industry_name or "-"} · 부채비율·ROE 등 나머지 지표는 실제 업종 평균이 아니라 일반적 기준선이라 순위를 매기지 않습니다 (1단계 참고).')
+
+    with tab_step4:
+        st.markdown('###### 긍정적 신호')
+        if positives:
+            for p in positives:
+                st.markdown(f'- ✅ {p}')
+        else:
+            st.caption('뚜렷한 긍정적 신호가 감지되지 않았습니다.')
+        st.divider()
+        st.markdown('###### 부정적 신호')
+        if negatives:
+            for n in negatives:
+                st.markdown(f'- ⚠️ {n}')
+        else:
+            st.caption('뚜렷한 부정적 신호가 감지되지 않았습니다.')
+        st.caption('밸류에이션·재무건전성·수익성·성장성·모멘텀·지배구조 순으로 우선순위를 매겨 최대 3개씩 뽑은 규칙 기반 신호이며, 투자 조언이 아닙니다.')
+
+    with tab_step5:
+        st.markdown('###### 종합 평가')
+        st.info(overall_lean)
+        st.caption(f'긍정 신호 {len(positives)}건 · 부정 신호 {len(negatives)}건 (4단계 기준)')
+        st.divider()
+        st.markdown('###### 추가로 확인이 필요한 사항')
+        for f in follow_ups:
+            st.markdown(f'- {f}')
+        st.caption('규칙 기반 요약이며 투자 조언이 아닙니다. 최종 투자 판단과 책임은 본인에게 있습니다.')
 
     with tab_flow:
         if 'Volume' in price_df.columns and len(price_df) >= 20:
@@ -2698,14 +2944,6 @@ def render_quant_scorecard():
 
         st.divider()
         st.markdown(f'###### {name} 관련 주요 뉴스')
-        try:
-            news_df = get_news_df()
-        except Exception:
-            news_df = pd.DataFrame()
-        related_news = pd.DataFrame()
-        if not news_df.empty and 'title' in news_df.columns:
-            related_news = news_df[news_df['title'].str.contains(name, case=False, na=False, regex=False)]
-            related_news = related_news.sort_values('published_at', ascending=False)
         if related_news.empty:
             st.caption(f'{name} 관련 뉴스를 찾지 못했습니다.')
         else:

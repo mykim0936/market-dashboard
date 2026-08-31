@@ -439,9 +439,10 @@ def fetch_balance_sheet_ratios(corp_code, bsns_year):
     """부채비율·유동비율·ROE·ROA·총자산회전율 계산에 필요한 원시 재무제표 계정을
     사업보고서 1회 조회로 최근 3개년치 받는다(전체 재무제표 API,
     fetch_operating_cashflow와 같은 "당기/전기/전전기 한 번에" 패턴). 반환:
-    {연도: {'debt_ratio':, 'current_ratio':, 'roe':, 'roa':, 'asset_turnover':}}
+    {연도: {'debt_ratio':, 'current_ratio':, 'roe':, 'roa':, 'asset_turnover':, 'net_income':}}
     (asset_turnover는 fetch_financial_ratios의 total_asset_turnover와 단위를
-    맞추려고 %로 반환 — 예: 30.245는 회전율 0.30배) — 계정을 못 찾으면 {}."""
+    맞추려고 %로 반환 — 예: 30.245는 회전율 0.30배. net_income은 억원 단위 순이익
+    원값) — 계정을 못 찾으면 {}."""
     for fs_div in ('CFS', 'OFS'):
         rows = _get('fnlttSinglAcntAll.json', {
             'corp_code': corp_code, 'bsns_year': bsns_year, 'reprt_code': '11011', 'fs_div': fs_div,
@@ -476,6 +477,8 @@ def fetch_balance_sheet_ratios(corp_code, bsns_year):
                 ratios['roa'] = net_income / total_assets * 100
             if revenue is not None and total_assets:
                 ratios['asset_turnover'] = revenue / total_assets * 100
+            if net_income is not None:
+                ratios['net_income'] = net_income  # 억원 — "핵심 지표 요약"에 순이익을 그대로 보여주는 데 씀
             if ratios:
                 by_year[year] = ratios
         if by_year:
