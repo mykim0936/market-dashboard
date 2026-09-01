@@ -1,35 +1,40 @@
 {
-  "generated_at": "2026-08-28T06:51:41.141910+00:00",
+  "generated_at": "2026-09-01T06:51:35.716098+00:00",
   "stocks": {
     "214430": {
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 12.77
+      "industry_per": 12.465
     },
     "050890": {
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 12.77
+      "industry_per": 12.465
     },
     "457190": {
       "market": "KOSPI",
       "industry_name": "화학",
-      "industry_per": 12.34
+      "industry_per": 12.51
     },
     "348370": {
       "market": "KOSDAQ",
       "industry_name": "화학",
-      "industry_per": 13.1
+      "industry_per": 13.024999999999999
     },
     "489790": {
       "market": "KOSPI",
       "industry_name": "전기·전자",
-      "industry_per": 37.175
+      "industry_per": 36.879999999999995
     },
     "051980": {
       "market": "KOSDAQ",
       "industry_name": "전기·전자",
-      "industry_per": 12.86
+      "industry_per": 12.57
+    },
+    "036620": {
+      "market": "KOSDAQ",
+      "industry_name": "유통",
+      "industry_per": 10.559999999999999
     }
   }
 }
