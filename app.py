@@ -1127,6 +1127,25 @@ INVESTOR_FLOW_SUBJECT_COLORS = alt.Scale(
 )
 
 
+def _trading_day_x_axis(field='날짜_str'):
+    """휴장일(주말·공휴일) 간격 제거용 X 인코딩. 날짜를 :T(연속 시간)로 두면
+    Vega-Lite가 실제 달력 간격대로 그려서 주말마다 막대·선이 살짝 벌어지거나
+    뭉치는 "빗살" 형태가 된다. 문자열(YYYY-MM-DD)로 만들어 :O(순서형)로 인코딩하면
+    실제 데이터가 있는 거래일만 균등 간격으로 그려진다. 라벨은 "YYYY-" 앞부분을
+    잘라 "MM-DD"만 보여주고, 겹치는 라벨은 자동으로 솎아낸다(labelOverlap)."""
+    return alt.X(
+        f'{field}:O',
+        title=None,
+        sort=None,
+        axis=alt.Axis(
+            labelAngle=-45,
+            labelOverlap='parity',
+            labelExpr="slice(datum.label, 5, 10)",
+            grid=True, gridOpacity=0.15, gridDash=[2, 2],
+        ),
+    )
+
+
 def render_investor_flow_panel():
     """투자자별(외국인/기관/개인) 순매수 — 코스피·코스닥을 나란히 비교할 수 있게
     2x2로 배치한다. 위쪽 행은 누적 순매수(선, "며칠째 사고/팔고 있는지" 추세용),
@@ -1157,19 +1176,23 @@ def _render_investor_flow_cumulative(df, market, market_label):
     chart_df = df[['날짜', '외국인합계', '기관합계', '개인']].copy()
     for col in ('외국인합계', '기관합계', '개인'):
         chart_df[col] = (chart_df[col] / 1e8).cumsum()  # 원 -> 억원, 누적
+    chart_df['날짜_str'] = chart_df['날짜'].dt.strftime('%Y-%m-%d')
 
-    melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
+    melted = chart_df.melt(id_vars=['날짜', '날짜_str'], var_name='주체', value_name='누적 순매수(억원)')
 
     chart = (
         alt.Chart(melted)
-        .mark_line(point=False)
+        .mark_line(point=False, strokeWidth=2.5)
         .encode(
-            x=alt.X('날짜:T', title=None),
-            y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
+            x=_trading_day_x_axis(),
+            y=alt.Y(
+                '누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False),
+                axis=alt.Axis(gridOpacity=0.15),
+            ),
             color=alt.Color('주체:N', title=None, scale=INVESTOR_FLOW_SUBJECT_COLORS),
-            tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
+            tooltip=[alt.Tooltip('날짜_str:N', title='날짜'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
         )
-        .properties(height=260)
+        .properties(height=300)
         .interactive()
     )
     st.altair_chart(chart, use_container_width=True)
@@ -1199,20 +1222,21 @@ def _render_investor_flow_daily(df, market_label):
     chart_df = df[['날짜', '외국인합계', '기관합계', '개인']].copy()
     for col in ('외국인합계', '기관합계', '개인'):
         chart_df[col] = chart_df[col] / 1e8  # 원 -> 억원
+    chart_df['날짜_str'] = chart_df['날짜'].dt.strftime('%Y-%m-%d')
 
-    melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='일별 순매수(억원)')
+    melted = chart_df.melt(id_vars=['날짜', '날짜_str'], var_name='주체', value_name='일별 순매수(억원)')
 
     chart = (
         alt.Chart(melted)
         .mark_bar()
         .encode(
-            x=alt.X('날짜:T', title=None),
+            x=_trading_day_x_axis(),
             xOffset=alt.XOffset('주체:N'),
-            y=alt.Y('일별 순매수(억원):Q', title='일별 순매수(억원)'),
+            y=alt.Y('일별 순매수(억원):Q', title='일별 순매수(억원)', axis=alt.Axis(gridOpacity=0.15)),
             color=alt.Color('주체:N', title=None, scale=INVESTOR_FLOW_SUBJECT_COLORS),
-            tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('일별 순매수(억원):Q', format=',.0f')],
+            tooltip=[alt.Tooltip('날짜_str:N', title='날짜'), alt.Tooltip('주체:N'), alt.Tooltip('일별 순매수(억원):Q', format=',.0f')],
         )
-        .properties(height=260)
+        .properties(height=300)
         .interactive()
     )
     st.altair_chart(chart, use_container_width=True)
