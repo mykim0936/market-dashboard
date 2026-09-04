@@ -174,16 +174,21 @@ def collect_investor_flow():
         latest_str, _ = find_latest_business_day()
         latest_date = datetime.strptime(latest_str, '%Y%m%d')
         from_str = (latest_date - timedelta(days=40)).strftime('%Y%m%d')
-
-        df = stock.get_market_trading_value_by_date(from_str, latest_str, 'KOSPI')
-        time.sleep(1)
-        df = df.tail(20)
-
-        path = os.path.join(DATA_DIR, 'investor_flow.csv')
-        df.to_csv(path, encoding='utf-8-sig')
-        print(f"[OK] investor_flow: {len(df)}행 (마지막 날짜 {df.index[-1].date()}) -> {path}")
     except Exception as e:
         print(f"[FAIL] investor_flow: {e}")
+        return
+
+    for market, filename in (('KOSPI', 'investor_flow.csv'), ('KOSDAQ', 'investor_flow_kosdaq.csv')):
+        try:
+            df = stock.get_market_trading_value_by_date(from_str, latest_str, market)
+            time.sleep(1)
+            df = df.tail(20)
+
+            path = os.path.join(DATA_DIR, filename)
+            df.to_csv(path, encoding='utf-8-sig')
+            print(f"[OK] investor_flow({market}): {len(df)}행 (마지막 날짜 {df.index[-1].date()}) -> {path}")
+        except Exception as e:
+            print(f"[FAIL] investor_flow({market}): {e}")
 
 
 STATUS_JSON = os.path.join(DATA_DIR, 'status.json')
