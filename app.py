@@ -1129,8 +1129,20 @@ def render_index_cards(series_list, title):
     st.caption(file_caption(os.path.join(DATA_DIR, ref_filename), 'pykrx / yfinance') + ' · 전일 대비')
 
 
+# 거시 지표 카드에 붙일 (단위, 초보자용 한 줄 설명) — indicators.csv의 indicator 열이 키다.
+# 값만 덩그러니 있으면 "3.00이 높은 건지 낮은 건지, 오르면 주식에 좋은 건지"를 알 수 없어
+# 단위와 "오르면 어떤 의미인지"를 같이 붙인다.
+MACRO_INDICATOR_HINTS = {
+    'base_rate': ('%', '한국은행이 정하는 정책금리. 오르면 대출·예금 금리가 따라 올라 주식 같은 위험자산엔 대체로 부담입니다.'),
+    'usdkrw': ('원', '1달러를 사는 데 드는 원화. 오르면(원화 약세) 수출기업엔 유리하지만 외국인 자금엔 이탈 압력이 됩니다.'),
+    'DGS10': ('%', '미국 국채 10년물 이자율. 세계 금리의 기준이라, 오르면 주식의 상대적 매력이 떨어지는 편입니다.'),
+    'DTWEXBGS': ('', '달러가 주요국 통화 대비 얼마나 강한지 보여주는 지수(단위 없음). 오르면 달러 강세라 신흥국 증시엔 자금 이탈 압력입니다.'),
+}
+
+
 def render_macro_panel():
     st.subheader('거시 지표')
+    st.caption('주식시장 전체에 영향을 주는 큰 흐름(금리·환율)입니다. 개별 종목보다 시장 전체의 방향을 좌우합니다.')
     df = get_indicators_df()
     if df.empty:
         st.info('표시할 거시 지표가 없습니다. ECOS_API_KEY / FRED_API_KEY 설정을 확인해 주세요.')
@@ -1138,12 +1150,15 @@ def render_macro_panel():
 
     cols = st.columns(len(df))
     for col, (_, row) in zip(cols, df.iterrows()):
+        unit, hint = MACRO_INDICATOR_HINTS.get(row['indicator'], ('', None))
         with col:
             try:
-                value_text = f"{float(row['value']):.2f}"  # FRED는 소수점을 길게 주는 경우가 있어 2자리로 정리
+                value_text = f"{float(row['value']):.2f}{unit}"  # FRED는 소수점을 길게 주는 경우가 있어 2자리로 정리
             except (TypeError, ValueError):
                 value_text = row['value']
             st.metric(row['label'], value_text)
+            if hint:
+                st.caption(hint)
             st.caption(f"기준일 {row['as_of']} · {row['source']}")
 
     fetched_at = df['fetched_at'].iloc[0]
@@ -1179,6 +1194,13 @@ def render_investor_flow_panel():
     2x2로 배치한다. 위쪽 행은 누적 순매수(선, "며칠째 사고/팔고 있는지" 추세용),
     아래쪽 행은 일별 순매수(막대, 특정 날짜의 급변동 확인용)."""
     st.subheader('투자자별 수급 (최근 3개월)')
+    st.markdown(
+        '누가 주식을 사고 팔았는지 보는 곳입니다. **외국인**(외국 투자자)과 **기관**(연기금·자산운용사 등)은 '
+        '자금 규모가 커서 시장 방향을 이끄는 경우가 많고, **개인**은 보통 그 반대편에 섭니다.\n'
+        '- **위쪽 누적 그래프**: 선이 계속 올라가면 그 주체가 며칠째 계속 사고 있다는 뜻, 내려가면 계속 팔고 있다는 뜻입니다.\n'
+        '- **아래쪽 일별 그래프**: 특정 날짜에 유난히 크게 사거나 판 날을 찾을 때 봅니다.\n'
+        '- 순매수 = 산 금액 − 판 금액. 양수(+)면 그날 순매수, 음수(−)면 순매도입니다.'
+    )
     data = {market: get_investor_flow_df(market) for market in ('KOSPI', 'KOSDAQ')}
 
     col_kospi, col_kosdaq = st.columns(2)
@@ -1276,6 +1298,10 @@ def render_sector_panel():
     지수 카드(코스피/코스닥 전체)만으로는 "시장이 왜 움직였는지"를 알 수 없어서,
     업종 단위로 쪼개 자금이 어디로 몰렸는지 한눈에 보게 하는 패널이다."""
     st.subheader(f'업종별 등락 (최근 {SECTOR_PERF_DAYS}일)')
+    st.caption(
+        '지수가 올랐다/내렸다만 봐서는 "왜"를 알 수 없어서, 같은 업종끼리 묶어 어디로 돈이 몰렸는지 봅니다. '
+        '내 보유 종목이 속한 업종이 아래쪽(파랑)에 있다면 종목 문제가 아니라 업황 전체가 눌린 것일 수 있습니다.'
+    )
 
     market_label = st.radio(
         '시장', ['코스피', '코스닥'], horizontal=True, key='sector_market', label_visibility='collapsed',
@@ -1359,6 +1385,11 @@ def style_portfolio(df):
 
 def render_portfolio_panel():
     st.subheader('보유 종목 현황')
+    st.caption(
+        '표에서 먼저 볼 것: **수익률(%)** — 내가 산 가격 대비 지금 얼마나 벌거나 잃었는지 / '
+        '**비중(%)** — 한 종목에 얼마나 몰려 있는지(한 종목이 40%를 넘으면 아래에 경고가 뜹니다) / '
+        '**전일대비(%)** — 어제 종가 대비 오늘 움직임. 나머지 열은 참고용입니다.'
+    )
     df = get_portfolio_df()
     if df is None:
         st.warning('portfolio.csv 파일이 없습니다. 보유 종목(티커/수량/평단가)을 채워주세요.')
@@ -1542,6 +1573,10 @@ def render_portfolio_performance():
     과거에도 그대로 들고 있었다고 가정한 역산이다 — 실제 계좌 잔고 추이와는 다르며
     캡션에 그 사실을 밝힌다."""
     st.subheader('포트폴리오 성과 추이')
+    st.caption(
+        '보유 종목 표가 "지금 이 순간"이라면, 여기는 "그동안 어떻게 흘러왔는지"입니다. '
+        '내 계좌와 지수를 같은 출발선(0%)에 놓고 비교해, 시장이 오를 때 같이 올랐는지 못 따라갔는지를 봅니다.'
+    )
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
@@ -1751,6 +1786,10 @@ def render_concentration_check():
     거래량배율/목표가·손절가) 패널을 대체한다 — 그 지표들은 정량 스코어카드
     (종목 분석 탭)에서 검색한 종목별로 그대로 볼 수 있다."""
     st.subheader('보유 종목 집중점검')
+    st.caption(
+        '주가만 봐서는 안 보이는 "회사 내부의 이상 신호"를 재무제표(DART 공시)에서 자동으로 찾아냅니다. '
+        '아래 5가지(마진 악화·이익의 질·재무 건전성·판매 부진·대주주 매도) 중 걸리는 게 있으면 종목별로 이유를 풀어서 알려줍니다.'
+    )
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
@@ -2282,6 +2321,13 @@ def render_rs_tab():
     RS = (종목 정규화 지수 / 벤치마크 정규화 지수) x 100 — 시작일을 100으로 맞추고,
     RS 선이 100보다 위면 벤치마크 대비 아웃퍼폼, 아래면 언더퍼폼이라는 뜻이다."""
     st.subheader('RS 비교 (보유 종목 vs 지수)')
+    st.markdown(
+        '**RS(Relative Strength, 상대강도)** — 내 종목이 시장(코스피 같은 지수)보다 잘했는지 못했는지를 봅니다. '
+        '주가가 올랐어도 시장이 더 많이 올랐다면 실제로는 뒤처진 것이라, "그냥 수익률"만으로는 알 수 없는 걸 보여줍니다.\n'
+        '- 시작일을 **100**으로 맞춘 뒤, 선이 **100 위**에 있으면 지수보다 잘한 것(아웃퍼폼), '
+        '**100 아래**면 못한 것(언더퍼폼)입니다.\n'
+        '- **%p(퍼센트포인트)** — 두 수익률의 차이를 나타내는 단위입니다. 예: 내 종목 −33%, 코스피 +31% → 차이는 −64%p.'
+    )
 
     portfolio_df = get_portfolio_df()
     if portfolio_df is None or portfolio_df.empty:
@@ -2334,7 +2380,10 @@ def render_rs_tab():
         c3.metric(
             '상대 성과',
             f'{outperformance:+.2f}%p',
-            delta='아웃퍼폼' if outperformance > 0 else ('언더퍼폼' if outperformance < 0 else '동일'),
+            delta=(
+                '지수보다 잘함(아웃퍼폼)' if outperformance > 0
+                else ('지수보다 못함(언더퍼폼)' if outperformance < 0 else '지수와 동일')
+            ),
             delta_color='off',
         )
 
@@ -2851,6 +2900,13 @@ def render_quant_scorecard():
         risk_lines = [t for t, s in zip((stability_text, dilution_text), (stability_score, dilution_score)) if s == -1]
         st.error('🚨 **주의: 재무·지배구조 위험 신호가 있습니다** — ' + ' / '.join(risk_lines))
 
+    st.caption(
+        '아래 탭은 **1단계부터 순서대로** 보도록 만들어졌습니다: '
+        '① 지금 숫자가 어떤지 → ② 그 숫자가 5년·20분기 동안 좋아졌는지 나빠졌는지 → '
+        '③ 같은 업종 회사들과 비교하면 어디쯤인지 → ④ 좋은 신호와 나쁜 신호 정리 → ⑤ 종합 정리와 더 확인할 것. '
+        '"수급·기술"과 "공시·이벤트"는 필요할 때만 보는 보조 자료입니다.'
+    )
+
     tab_step1, tab_step2, tab_step3, tab_step4, tab_step5, tab_flow, tab_events = st.tabs([
         '1단계 · 핵심 지표', '2단계 · 추이 분석', '3단계 · 경쟁사 비교',
         '4단계 · 투자 신호', '5단계 · 종합 평가', '수급·기술', '공시·이벤트',
@@ -3245,6 +3301,34 @@ def render_fx_news_live():
     render_news_panel()
 
 
+def render_getting_started():
+    """맨 위 "처음 오셨나요?" 안내 — 대시보드를 처음 여는 사람이 (1) 각 탭이 뭘 하는
+    곳인지, (2) 숫자 색깔을 어떻게 읽어야 하는지, (3) 데이터가 언제 기준인지를 한
+    번에 알 수 있게 한다. 접이식(expander)이라 익숙해진 뒤에는 접어두면 된다."""
+    with st.expander('처음 오셨나요? — 탭 안내와 숫자 읽는 법', expanded=False):
+        st.markdown(
+            '**어느 탭부터 보면 되나요?**\n'
+            '- **전체 시장현황** — 오늘 시장 전체가 어떤지. 지수·금리·환율, 외국인/기관이 사고 있는지, '
+            '어느 업종이 오르내렸는지를 봅니다. *"오늘 장 분위기"를 먼저 잡는 곳입니다.*\n'
+            '- **내 계좌 포트폴리오** — 내가 가진 종목의 손익, 비중 쏠림, 위험 신호를 봅니다. '
+            '*자기 계좌를 점검하는 곳입니다.*\n'
+            '- **환율 및 뉴스** — 원/달러·유로·엔·위안 환율과 최근 24시간 경제 뉴스입니다.\n'
+            '- **RS 비교** — 내 종목이 코스피 같은 지수보다 잘했는지 못했는지 비교합니다.\n'
+            '- **종목 분석** — 아무 종목이나 검색해 재무제표·수급·기술적 지표를 5단계로 뜯어봅니다. '
+            '*종목 하나를 깊게 볼 때 쓰는 곳입니다.*\n'
+            '\n'
+            '**숫자 색깔은 이렇게 읽으세요**\n'
+            '- 표와 그래프: **빨강 = 오름 / 파랑 = 내림** (국내 증권사와 같은 방식)\n'
+            '- 큰 숫자 카드: **빨강 = 오름 / 초록 = 내림** — 카드는 Streamlit이 파랑을 지원하지 않아 '
+            '초록으로 표시됩니다. 색이 달라도 뜻은 같습니다(내림).\n'
+            '\n'
+            '**데이터는 언제 기준인가요?**\n'
+            '- 각 패널 맨 아래 회색 글씨에 "갱신 시각"과 출처가 적혀 있습니다. 실시간 호가가 아니라 '
+            '하루~수십 분 단위로 모아둔 값이라, 매매 판단 전에는 증권사 앱(HTS/MTS)에서 꼭 다시 확인하세요.\n'
+            '- 이 대시보드는 참고용이며 투자 자문이 아닙니다. 최종 판단과 책임은 본인에게 있습니다.'
+        )
+
+
 def main():
     st.set_page_config(page_title='시장 대시보드', layout='wide')
     inject_theme_css()
@@ -3253,6 +3337,7 @@ def main():
         return
 
     st.title('시장 대시보드')
+    render_getting_started()
 
     interval = render_sidebar()
 
