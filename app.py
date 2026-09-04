@@ -423,6 +423,11 @@ def fetch_investor_flow_live(market='KOSPI'):
 
 
 def get_investor_flow_df(market='KOSPI'):
+    snapshot_rows = load_dart_snapshot_investor_flow().get(market)
+    if snapshot_rows:
+        df = pd.DataFrame(snapshot_rows)
+        df['날짜'] = pd.to_datetime(df['날짜'])
+        return df
     csv_path = INVESTOR_FLOW_CSV if market == 'KOSPI' else INVESTOR_FLOW_KOSDAQ_CSV
     if os.path.exists(csv_path):
         df = pd.read_csv(csv_path, encoding='utf-8-sig')
@@ -518,7 +523,17 @@ def fetch_sector_performance(market, days):
     """market('KOSPI'/'KOSDAQ') 업종 지수의 기간 등락률(%)을 내림차순 Series로
     반환한다(업종명 -> 등락률). pykrx가 같은 응답에 시장 전체("코스피")와
     "코스피 200 정보기술" 같은 파생 지수까지 섞어 주므로, 시장 이름으로 시작하는
-    항목을 빼서 순수 업종 지수만 남긴다. 조회 실패 시 빈 Series."""
+    항목을 빼서 순수 업종 지수만 남긴다. 조회 실패 시 빈 Series.
+
+    클라우드에서는 pykrx 라이브 조회가 막혀 있어, collect_dart.py가 커밋해둔
+    스냅샷(SECTOR_PERF_DAYS=7일 고정)이 있으면 그걸 우선 쓴다 — days가 그 값과
+    다르면(현재 호출부는 항상 SECTOR_PERF_DAYS를 넘기므로 실질적으로 항상 일치)
+    스냅샷을 건너뛰고 라이브 조회로 대체한다."""
+    if days == SECTOR_PERF_DAYS:
+        snapshot = load_dart_snapshot_sector_performance().get(market)
+        if snapshot:
+            return pd.Series(snapshot, dtype=float).sort_values(ascending=False)
+
     end_dt = datetime.now()
     start_dt = end_dt - pd.Timedelta(days=days)
     try:
@@ -557,6 +572,34 @@ def load_dart_snapshot_generated_at():
             return json.load(f).get('generated_at')
     except Exception:
         return None
+
+
+@st.cache_data(ttl=CACHE_TTL_SEC)
+def load_dart_snapshot_investor_flow():
+    """collect_dart.py가 커밋해둔 투자자별 수급 스냅샷 — {market: [{날짜, 외국인합계,
+    기관합계, 개인}, ...]}. data/investor_flow*.csv는 .gitignore돼 있어 클라우드
+    배포본에 안 실리므로, 라이브 조회가 막힌 클라우드에서는 이 스냅샷이 유일한
+    데이터 소스다. 없거나 비었으면 {}."""
+    if not os.path.exists(DART_SNAPSHOT_PATH):
+        return {}
+    try:
+        with open(DART_SNAPSHOT_PATH, encoding='utf-8') as f:
+            return json.load(f).get('investor_flow', {})
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=CACHE_TTL_SEC)
+def load_dart_snapshot_sector_performance():
+    """collect_dart.py가 커밋해둔 업종별 등락 스냅샷 — {market: {업종명: 등락률}}.
+    없거나 비었으면 {}."""
+    if not os.path.exists(DART_SNAPSHOT_PATH):
+        return {}
+    try:
+        with open(DART_SNAPSHOT_PATH, encoding='utf-8') as f:
+            return json.load(f).get('sector_performance', {})
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=DART_TTL_SEC)
@@ -1131,9 +1174,13 @@ def _render_investor_flow_market(market, market_label):
     cols[1].metric('기관 당일', f"{last['기관합계'] / 1e8:+,.0f}억")
     cols[2].metric('개인 당일', f"{last['개인'] / 1e8:+,.0f}억")
 
-    csv_path = INVESTOR_FLOW_CSV if market == 'KOSPI' else INVESTOR_FLOW_KOSDAQ_CSV
+    if load_dart_snapshot_investor_flow().get(market):
+        snapshot_source = f"갱신 시각: 스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py) · 출처: pykrx (KRX 투자자별 거래대금)"
+    else:
+        csv_path = INVESTOR_FLOW_CSV if market == 'KOSPI' else INVESTOR_FLOW_KOSDAQ_CSV
+        snapshot_source = file_caption(csv_path, 'pykrx (KRX 투자자별 거래대금)')
     st.caption(
-        file_caption(csv_path, 'pykrx (KRX 투자자별 거래대금)')
+        snapshot_source
         + f' · 최근 20거래일 누적 · {market_label} 전체 기준(개별 종목 수급 아님)'
     )
 
@@ -1186,9 +1233,13 @@ def render_sector_panel():
         for _, r in bottom.iterrows():
             st.markdown(f"- {r['업종']} `{r['등락률(%)']:+.2f}%`")
 
+    if load_dart_snapshot_sector_performance().get(market):
+        source_note = f"스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py)"
+    else:
+        source_note = '라이브 조회'
     st.caption(
         f'{market_label} 업종 지수의 최근 {SECTOR_PERF_DAYS}일 등락률 · 빨강=상승, 파랑=하락 · '
-        '출처: pykrx (KRX 업종 지수)'
+        f'출처: pykrx (KRX 업종 지수) · {source_note}'
     )
 
 

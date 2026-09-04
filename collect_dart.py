@@ -22,6 +22,57 @@ SNAPSHOT_PATH = os.path.join(DATA_DIR, 'dart_snapshot.json')
 PER_LOOKBACK_DAYS = 5
 
 
+def fetch_investor_flow_snapshot():
+    """app.py의 "투자자별 수급" 패널용 — 코스피·코스닥 각각 최근 20거래일
+    외국인/기관/개인 순매수 대금(원)을 JSON에 실을 수 있는 레코드 리스트로 만든다.
+    data/investor_flow*.csv와 같은 pykrx 호출이지만, 그 CSV들은 .gitignore돼 있어
+    클라우드 배포본에는 실리지 않는다 — 이 스냅샷에 넣어야 클라우드에서도 보인다."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=40)
+    result = {}
+    for market in ('KOSPI', 'KOSDAQ'):
+        try:
+            df = pykrx_stock.get_market_trading_value_by_date(
+                start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), market)
+            df = df.tail(20)
+        except Exception:
+            result[market] = []
+            continue
+        if df.empty:
+            result[market] = []
+            continue
+        records = df.reset_index().rename(columns={df.index.name or 'index': '날짜'})
+        records['날짜'] = records['날짜'].astype(str)
+        result[market] = records[['날짜', '외국인합계', '기관합계', '개인']].to_dict('records')
+    return result
+
+
+SECTOR_PERF_DAYS = 7
+
+
+def fetch_sector_performance_snapshot():
+    """app.py의 "업종별 등락" 패널용 — 코스피·코스닥 업종 지수의 최근 7일
+    등락률(%)을 {업종명: 등락률} 형태로 만든다. fetch_sector_performance와 같은
+    로직(시장 전체·파생 지수 제외)."""
+    end_dt = datetime.now()
+    start_dt = end_dt - pd.Timedelta(days=SECTOR_PERF_DAYS)
+    result = {}
+    for market in ('KOSPI', 'KOSDAQ'):
+        try:
+            df = pykrx_stock.get_index_price_change(
+                start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), market)
+        except Exception:
+            result[market] = {}
+            continue
+        if df.empty or '등락률' not in df.columns:
+            result[market] = {}
+            continue
+        prefix = '코스피' if market == 'KOSPI' else '코스닥'
+        sectors = df[~df.index.str.startswith(prefix)]
+        result[market] = sectors['등락률'].sort_values(ascending=False).to_dict()
+    return result
+
+
 def fetch_per_universe(market):
     """app.py의 동명 함수와 같은 로직 — 최근 며칠 안에서 데이터 있는 날을 찾는다."""
     for delta in range(PER_LOOKBACK_DAYS):
@@ -125,7 +176,9 @@ def git_commit_and_push():
 
 def main():
     stocks = build_snapshot()
-    if not stocks:
+    investor_flow = fetch_investor_flow_snapshot()
+    sector_performance = fetch_sector_performance_snapshot()
+    if not stocks and not any(investor_flow.values()) and not any(sector_performance.values()):
         print('스냅샷에 담을 데이터가 없어 저장을 건너뜁니다.')
         return
 
@@ -133,10 +186,15 @@ def main():
     payload = {
         'generated_at': datetime.now(timezone.utc).isoformat(),
         'stocks': stocks,
+        'investor_flow': investor_flow,
+        'sector_performance': sector_performance,
     }
     with open(SNAPSHOT_PATH, 'w', encoding='utf-8') as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f'-> {len(stocks)}개 종목을 {SNAPSHOT_PATH} 에 저장했습니다.')
+    print(
+        f'-> {len(stocks)}개 종목 · 투자자별 수급 {sum(len(v) for v in investor_flow.values())}행 · '
+        f'업종 {sum(len(v) for v in sector_performance.values())}개를 {SNAPSHOT_PATH} 에 저장했습니다.'
+    )
 
     git_commit_and_push()
 
