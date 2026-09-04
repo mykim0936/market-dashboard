@@ -413,13 +413,13 @@ def get_indicators_df():
 
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
 def fetch_investor_flow_live(market='KOSPI'):
-    """최근 20거래일 투자자별(기관/외국인/개인) 순매수 대금(원). collect.py의
+    """최근 3개월 투자자별(기관/외국인/개인) 순매수 대금(원). collect.py의
     collect_investor_flow()와 같은 조회를 그 자리에서 직접 한다."""
     end_dt = datetime.now()
-    start_dt = end_dt - pd.Timedelta(days=40)
+    start_dt = end_dt - pd.DateOffset(months=3)
     df = pykrx_stock.get_market_trading_value_by_date(
         start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), market)
-    return df.tail(20)
+    return df
 
 
 def get_investor_flow_df(market='KOSPI'):
@@ -1122,45 +1122,51 @@ def render_macro_panel():
     st.caption(f"갱신 시각: {fetched_at} · 출처: ECOS / FRED")
 
 
+INVESTOR_FLOW_SUBJECT_COLORS = alt.Scale(
+    domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE],
+)
+
+
 def render_investor_flow_panel():
-    """투자자별(외국인/기관/개인) 누적 순매수 — 최근 20거래일 순매수 대금을
-    날짜순으로 누적해서, "며칠째 사고 있는지/팔고 있는지"를 선 기울기로 바로 볼 수
-    있게 한다. 하루치 막대보다 누적선이 추세 판단에는 더 직접적이다. 코스피·코스닥을
-    나란히 비교할 수 있게 2열로 보여준다."""
-    st.subheader('투자자별 수급')
+    """투자자별(외국인/기관/개인) 순매수 — 코스피·코스닥을 나란히 비교할 수 있게
+    2x2로 배치한다. 위쪽 행은 누적 순매수(선, "며칠째 사고/팔고 있는지" 추세용),
+    아래쪽 행은 일별 순매수(막대, 특정 날짜의 급변동 확인용)."""
+    st.subheader('투자자별 수급 (최근 3개월)')
+    data = {market: get_investor_flow_df(market) for market in ('KOSPI', 'KOSDAQ')}
+
     col_kospi, col_kosdaq = st.columns(2)
     with col_kospi:
-        _render_investor_flow_market('KOSPI', '코스피')
+        _render_investor_flow_cumulative(data['KOSPI'], 'KOSPI', '코스피')
     with col_kosdaq:
-        _render_investor_flow_market('KOSDAQ', '코스닥')
+        _render_investor_flow_cumulative(data['KOSDAQ'], 'KOSDAQ', '코스닥')
+
+    col_kospi2, col_kosdaq2 = st.columns(2)
+    with col_kospi2:
+        _render_investor_flow_daily(data['KOSPI'], '코스피')
+    with col_kosdaq2:
+        _render_investor_flow_daily(data['KOSDAQ'], '코스닥')
 
 
-def _render_investor_flow_market(market, market_label):
-    """render_investor_flow_panel의 2열 중 한 칸(코스피 또는 코스닥) — 누적 순매수
-    차트 + 당일 순매수 3종을 그린다."""
-    st.markdown(f'###### {market_label}')
-    df = get_investor_flow_df(market)
+def _render_investor_flow_cumulative(df, market, market_label):
+    """2x2 위쪽 행 한 칸 — 누적 순매수 선 차트 + 당일 순매수 3종 + 출처 캡션."""
+    st.markdown(f'###### {market_label} · 누적')
     if df.empty:
         st.info('투자자별 수급 데이터를 불러오지 못했습니다.')
         return
 
     chart_df = df[['날짜', '외국인합계', '기관합계', '개인']].copy()
     for col in ('외국인합계', '기관합계', '개인'):
-        chart_df[col] = chart_df[col] / 1e8  # 원 -> 억원
-        chart_df[col] = chart_df[col].cumsum()
+        chart_df[col] = (chart_df[col] / 1e8).cumsum()  # 원 -> 억원, 누적
 
     melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='누적 순매수(억원)')
 
     chart = (
         alt.Chart(melted)
-        .mark_line(point=True)
+        .mark_line(point=False)
         .encode(
             x=alt.X('날짜:T', title=None),
             y=alt.Y('누적 순매수(억원):Q', title='누적 순매수(억원)', scale=alt.Scale(zero=False)),
-            color=alt.Color(
-                '주체:N', title=None,
-                scale=alt.Scale(domain=['외국인합계', '기관합계', '개인'], range=[SWISS_GREEN, SWISS_GRAY, SWISS_WHITE]),
-            ),
+            color=alt.Color('주체:N', title=None, scale=INVESTOR_FLOW_SUBJECT_COLORS),
             tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('누적 순매수(억원):Q', format=',.0f')],
         )
         .properties(height=260)
@@ -1175,14 +1181,42 @@ def _render_investor_flow_market(market, market_label):
     cols[2].metric('개인 당일', f"{last['개인'] / 1e8:+,.0f}억")
 
     if load_dart_snapshot_investor_flow().get(market):
-        snapshot_source = f"갱신 시각: 스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py) · 출처: pykrx (KRX 투자자별 거래대금)"
+        source = f"스냅샷({load_dart_snapshot_generated_at() or '?'} 기준, collect_dart.py) · 출처: pykrx (KRX 투자자별 거래대금)"
     else:
         csv_path = INVESTOR_FLOW_CSV if market == 'KOSPI' else INVESTOR_FLOW_KOSDAQ_CSV
-        snapshot_source = file_caption(csv_path, 'pykrx (KRX 투자자별 거래대금)')
-    st.caption(
-        snapshot_source
-        + f' · 최근 20거래일 누적 · {market_label} 전체 기준(개별 종목 수급 아님)'
+        source = file_caption(csv_path, 'pykrx (KRX 투자자별 거래대금)')
+    st.caption(source + f' · 최근 3개월 누적 · {market_label} 전체 기준(개별 종목 수급 아님)')
+
+
+def _render_investor_flow_daily(df, market_label):
+    """2x2 아래쪽 행 한 칸 — 하루 단위 순매수 막대 차트(누적하지 않은 원값).
+    특정 날짜에 유독 크게 사거나 판 날을 바로 찾을 수 있게 누적 차트와 짝을 이룬다."""
+    st.markdown(f'###### {market_label} · 일별')
+    if df.empty:
+        st.info('투자자별 수급 데이터를 불러오지 못했습니다.')
+        return
+
+    chart_df = df[['날짜', '외국인합계', '기관합계', '개인']].copy()
+    for col in ('외국인합계', '기관합계', '개인'):
+        chart_df[col] = chart_df[col] / 1e8  # 원 -> 억원
+
+    melted = chart_df.melt(id_vars='날짜', var_name='주체', value_name='일별 순매수(억원)')
+
+    chart = (
+        alt.Chart(melted)
+        .mark_bar()
+        .encode(
+            x=alt.X('날짜:T', title=None),
+            xOffset=alt.XOffset('주체:N'),
+            y=alt.Y('일별 순매수(억원):Q', title='일별 순매수(억원)'),
+            color=alt.Color('주체:N', title=None, scale=INVESTOR_FLOW_SUBJECT_COLORS),
+            tooltip=[alt.Tooltip('날짜:T'), alt.Tooltip('주체:N'), alt.Tooltip('일별 순매수(억원):Q', format=',.0f')],
+        )
+        .properties(height=260)
+        .interactive()
     )
+    st.altair_chart(chart, use_container_width=True)
+    st.caption('막대는 그날 하루치 순매수(누적 아님) · 외국인·기관·개인을 나란히 배치')
 
 
 def render_sector_panel():

@@ -173,7 +173,7 @@ def collect_investor_flow():
     try:
         latest_str, _ = find_latest_business_day()
         latest_date = datetime.strptime(latest_str, '%Y%m%d')
-        from_str = (latest_date - timedelta(days=40)).strftime('%Y%m%d')
+        from_str = (latest_date - pd.DateOffset(months=3)).strftime('%Y%m%d')
     except Exception as e:
         print(f"[FAIL] investor_flow: {e}")
         return
@@ -182,7 +182,6 @@ def collect_investor_flow():
         try:
             df = stock.get_market_trading_value_by_date(from_str, latest_str, market)
             time.sleep(1)
-            df = df.tail(20)
 
             path = os.path.join(DATA_DIR, filename)
             df.to_csv(path, encoding='utf-8-sig')

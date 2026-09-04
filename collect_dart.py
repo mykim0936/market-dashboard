@@ -23,18 +23,17 @@ PER_LOOKBACK_DAYS = 5
 
 
 def fetch_investor_flow_snapshot():
-    """app.py의 "투자자별 수급" 패널용 — 코스피·코스닥 각각 최근 20거래일
+    """app.py의 "투자자별 수급" 패널용 — 코스피·코스닥 각각 최근 3개월치
     외국인/기관/개인 순매수 대금(원)을 JSON에 실을 수 있는 레코드 리스트로 만든다.
     data/investor_flow*.csv와 같은 pykrx 호출이지만, 그 CSV들은 .gitignore돼 있어
     클라우드 배포본에는 실리지 않는다 — 이 스냅샷에 넣어야 클라우드에서도 보인다."""
     end_dt = datetime.now()
-    start_dt = end_dt - pd.Timedelta(days=40)
+    start_dt = end_dt - pd.DateOffset(months=3)
     result = {}
     for market in ('KOSPI', 'KOSDAQ'):
         try:
             df = pykrx_stock.get_market_trading_value_by_date(
                 start_dt.strftime('%Y%m%d'), end_dt.strftime('%Y%m%d'), market)
-            df = df.tail(20)
         except Exception:
             result[market] = []
             continue
