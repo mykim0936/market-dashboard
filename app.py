@@ -63,8 +63,15 @@ MARKET_SERIES = [
     ('S&P500', 'sp500.csv', 'yfinance', '^GSPC'),
 ]
 
+# 5번째 값(선택)은 표시 배율 — 엔화는 원/엔 원값이 너무 작아(1엔 ≈ 9원) 국내
+# 관행대로 "100엔당"으로 보여주려고 100을 곱한다. 나머지는 기본값 1(생략 가능).
 FX_SERIES = [
     ('원/달러', 'usdkrw.csv', 'yfinance', 'KRW=X'),
+    ('원/유로', 'eurkrw.csv', 'yfinance', 'EURKRW=X'),
+    ('원/100엔', 'jpykrw.csv', 'yfinance', 'JPYKRW=X', 100),
+    # CNYKRW=X는 Yahoo가 오늘 시세만 주고 과거 이력을 안 줘서(확인함), USD 기준
+    # 두 쌍을 나눈 교차환율로 계산한다: CNY/KRW = (USD/KRW) ÷ (USD/CNY).
+    ('원/위안', 'cnykrw.csv', 'cross', ('KRW=X', 'CNY=X')),
 ]
 
 # RS(상대강도) 비교 탭에서 고를 수 있는 기초지수 — (소스, 코드)는 MARKET_SERIES와 같은 규칙.
@@ -360,6 +367,21 @@ def fetch_yfinance_df(ticker, start_dt):
     return df
 
 
+def fetch_yfinance_cross_df(numerator_ticker, denominator_ticker, start_dt):
+    """두 USD 기준 환율을 나눠 크로스 환율을 만든다(예: USD/KRW ÷ USD/CNY = CNY/KRW).
+    Yahoo가 "CNYKRW=X" 같은 직접 쌍은 오늘 시세만 주고 과거 이력을 안 줘서(확인함),
+    둘 다 이력이 있는 USD 기준 쌍으로 우회 계산한다."""
+    num_df = fetch_yfinance_df(numerator_ticker, start_dt)
+    den_df = fetch_yfinance_df(denominator_ticker, start_dt)
+    if num_df.empty or den_df.empty:
+        return pd.DataFrame()
+    combined = num_df[['Close']].join(den_df[['Close']], lsuffix='_num', rsuffix='_den', how='inner')
+    result = pd.DataFrame(index=combined.index)
+    result['Close'] = combined['Close_num'] / combined['Close_den']
+    result.index.name = 'Date'
+    return result
+
+
 @st.cache_data(ttl=LIVE_FETCH_TTL_SEC)
 def load_series_live(source, code, start_dt):
     """반환값은 (df, 실제로 쓰인 출처 라벨) — 국내 지수는 pykrx를 우선 시도하고
@@ -378,6 +400,10 @@ def load_series_live(source, code, start_dt):
             pass
         fallback_ticker = PYKRX_TO_YFINANCE_FALLBACK[code]
         return fetch_yfinance_df(fallback_ticker, start_dt), 'yfinance (pykrx 실패, 자동 폴백)'
+
+    if source == 'cross':
+        numerator_ticker, denominator_ticker = code
+        return fetch_yfinance_cross_df(numerator_ticker, denominator_ticker, start_dt), 'yfinance (계산: 교차환율)'
 
     return fetch_yfinance_df(code, start_dt), 'yfinance'
 
@@ -1081,11 +1107,13 @@ def file_caption(path, source):
 def render_index_cards(series_list, title):
     st.subheader(title)
     cols = st.columns(len(series_list))
-    for col, (label, filename, source, code) in zip(cols, series_list):
+    for col, series in zip(cols, series_list):
+        label, filename, source, code = series[:4]
+        multiplier = series[4] if len(series) > 4 else 1
         with col:
             try:
                 df, _ = get_series(filename, source, code, CARD_LOOKBACK_YEARS)
-                last_two = df['Close'].tail(2)
+                last_two = df['Close'].tail(2) * multiplier
                 current = last_two.iloc[-1]
                 delta = current - last_two.iloc[-2] if len(last_two) == 2 else None
                 if delta is None:
@@ -2208,7 +2236,8 @@ def render_index_charts(series_list):
 
 
 def _render_one_index_chart(series):
-    label, filename, source, code = series
+    label, filename, source, code = series[:4]
+    multiplier = series[4] if len(series) > 4 else 1
     st.subheader(label)
     selected_period = st.radio(
         f'{label} 기간', list(CHART_PERIODS),
@@ -2226,6 +2255,8 @@ def _render_one_index_chart(series):
             if df.empty:
                 raise ValueError('선택한 기간에 해당하는 데이터가 없습니다')
         chart_df = df[['Close']].reset_index()
+        if multiplier != 1:
+            chart_df['Close'] = chart_df['Close'] * multiplier
         chart = (
             alt.Chart(chart_df)
             .mark_line(color=NEUTRAL_CHART_COLOR)

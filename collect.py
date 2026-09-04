@@ -35,7 +35,14 @@ PYKRX_TO_YFINANCE_FALLBACK = {
 YFINANCE_SYMBOLS = {
     'nasdaq': '^IXIC',  # 나스닥 종합
     'sp500': '^GSPC',   # S&P500
-    'usdkrw': 'KRW=X',  # 원/달러 환율
+    'usdkrw': 'KRW=X',       # 원/달러 환율
+    'eurkrw': 'EURKRW=X',    # 원/유로 환율
+    'jpykrw': 'JPYKRW=X',    # 원/엔 환율(원값 — app.py에서 100엔당으로 환산해 표시)
+}
+# CNYKRW=X는 Yahoo가 오늘 시세만 주고 과거 이력을 안 줘서(app.py에서 확인),
+# 이력이 있는 USD 기준 두 쌍을 나눠 교차환율로 계산한다: CNY/KRW = (USD/KRW) ÷ (USD/CNY).
+YFINANCE_CROSS_SYMBOLS = {
+    'cnykrw': ('KRW=X', 'CNY=X'),
 }
 START = '2001-01-01'
 DATA_DIR = 'data'
@@ -58,6 +65,20 @@ def fetch_yfinance_series(ticker, start):
         df.columns = df.columns.get_level_values(0)
     df.index.name = 'Date'
     return df
+
+
+def fetch_yfinance_cross_series(numerator_ticker, denominator_ticker, start):
+    """app.py의 fetch_yfinance_cross_df와 같은 로직 — 두 USD 기준 환율을 나눠
+    직접 이력이 없는 통화쌍(CNYKRW=X 등)의 과거 시세를 만든다."""
+    num_df = fetch_yfinance_series(numerator_ticker, start)
+    den_df = fetch_yfinance_series(denominator_ticker, start)
+    if num_df.empty or den_df.empty:
+        return pd.DataFrame()
+    combined = num_df[['Close']].join(den_df[['Close']], lsuffix='_num', rsuffix='_den', how='inner')
+    result = pd.DataFrame(index=combined.index)
+    result['Close'] = combined['Close_num'] / combined['Close_den']
+    result.index.name = 'Date'
+    return result
 
 
 def fetch_domestic_index(code, start_str, end_str, start_iso):
@@ -132,6 +153,13 @@ def collect():
     for name, ticker in YFINANCE_SYMBOLS.items():
         try:
             df = fetch_yfinance_series(ticker, START)
+            save_series_if_safe(name, df)
+        except Exception as e:
+            print(f"[FAIL] {name}: {e}")
+
+    for name, (num_ticker, den_ticker) in YFINANCE_CROSS_SYMBOLS.items():
+        try:
+            df = fetch_yfinance_cross_series(num_ticker, den_ticker, START)
             save_series_if_safe(name, df)
         except Exception as e:
             print(f"[FAIL] {name}: {e}")
