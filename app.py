@@ -3275,10 +3275,41 @@ def render_sidebar():
         return REFRESH_OPTIONS[choice]
 
 
+def render_market_issues_panel():
+    """지수 카드 바로 아래 — "오늘 지수가 왜 이렇게 움직였는지" 실마리를 코스피·
+    코스닥 관련 뉴스 3개씩으로 보여준다. 전용 뉴스 소스가 따로 있는 게 아니라,
+    이미 수집 중인 일반 경제 RSS(get_news_df, "환율 및 뉴스" 탭과 같은 소스)에서
+    제목에 "코스피"/"코스닥"이 들어간 기사만 걸러 재사용한다 — 보도량이 적은
+    날은 3개를 못 채울 수 있다."""
+    st.subheader('오늘의 코스피·코스닥 이슈')
+    try:
+        news_df = get_news_df()
+    except Exception:
+        news_df = pd.DataFrame()
+    if news_df.empty or 'title' not in news_df.columns:
+        st.info('오늘 관련 뉴스를 찾지 못했습니다.')
+        return
+    news_df = news_df.sort_values('published_at', ascending=False)
+
+    col_kospi, col_kosdaq = st.columns(2)
+    with col_kospi:
+        st.markdown('###### 코스피')
+        render_news_list(news_df[news_df['title'].str.contains('코스피', na=False, regex=False)].head(3))
+    with col_kosdaq:
+        st.markdown('###### 코스닥')
+        render_news_list(news_df[news_df['title'].str.contains('코스닥', na=False, regex=False)].head(3))
+
+    st.caption(
+        '제목에 "코스피"·"코스닥"이 들어간 기사만 걸러 보여줍니다(최근 24시간, 일반 경제 RSS 재사용) · '
+        '출처: RSS 피드 (fetch_news.py)'
+    )
+
+
 def render_market_live():
     """"전체 시장현황" 탭의 자동 새로고침 대상 — 지수 카드·거시 지표·투자자별 수급."""
     st.caption(f"화면 갱신 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     render_index_cards(MARKET_SERIES, '지수 현황')
+    render_market_issues_panel()
     st.divider()
     render_macro_panel()
     st.divider()
