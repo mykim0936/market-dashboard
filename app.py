@@ -131,6 +131,8 @@ PORTFOLIO_CSV = os.path.join(DATA_DIR, 'portfolio_status.csv')
 DART_SNAPSHOT_PATH = os.path.join(DATA_DIR, 'dart_snapshot.json')
 INVESTOR_FLOW_CSV = os.path.join(DATA_DIR, 'investor_flow.csv')
 INVESTOR_FLOW_KOSDAQ_CSV = os.path.join(DATA_DIR, 'investor_flow_kosdaq.csv')
+# collect_recommendations.py가 만드는 종목추천(기술적 신호 4종) 스냅샷.
+RECOMMENDATIONS_PATH = os.path.join(DATA_DIR, 'recommendations.json')
 NEWS_LIMIT = 15
 
 CASH_TICKER = 'CASH'
@@ -3071,6 +3073,131 @@ def render_stock_opinion_tab():
     render_quant_scorecard()
 
 
+@st.cache_data(ttl=CACHE_TTL_SEC)
+def load_recommendations():
+    """collect_recommendations.py(별도 스케줄러, run_recommendations.bat)가 만들어두는
+    종목추천 스냅샷. 아직 한 번도 안 돌렸거나 파일이 깨졌으면 빈 dict — 호출부가
+    "아직 수집 전" 안내를 보여준다."""
+    if not os.path.exists(RECOMMENDATIONS_PATH):
+        return {}
+    try:
+        with open(RECOMMENDATIONS_PATH, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _recommendation_table(items, columns_map):
+    """items: collect_recommendations.py가 저장한 신호 dict 리스트. columns_map:
+    {json 키: 표시할 컬럼명} — 순서대로 종목코드/종목명 뒤에 붙는다."""
+    if not items:
+        return pd.DataFrame()
+    rows = []
+    for it in items:
+        row = {'종목코드': it['symbol'], '종목명': it['name']}
+        for key, label in columns_map.items():
+            row[label] = it.get(key)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def render_recommendation_tab():
+    """"종목추천" 탭 — 기술적 신호 4종(추세추종/역추세/돌파/다이버전스)을 코스피·
+    코스닥 전 종목에서 스캔한 결과. 페이지를 열 때마다 라이브로 계산하면 전종목
+    OHLCV 이력을 매번 받아야 해 너무 무겁다(수 분~수십 분) — 그래서 이 탭은
+    collect_recommendations.py가 미리 만들어둔 스냅샷(data/recommendations.json)을
+    읽기만 하고, 실제 계산은 별도 스케줄러가 한다."""
+    st.subheader('종목추천')
+    st.caption(
+        '기술적 신호 4종을 코스피·코스닥 전 종목에서 정기적으로 스캔합니다 '
+        '(collect_recommendations.py, 작업 스케줄러). 실시간이 아니라 마지막 수집 '
+        '시점 기준의 스냅샷이며, 투자 판단과 실행은 본인 책임입니다.'
+    )
+
+    data = load_recommendations()
+    if not data:
+        st.info(
+            '아직 수집된 추천 데이터가 없습니다. 터미널에서 `python collect_recommendations.py`를 '
+            '한 번 실행하거나, 작업 스케줄러 등록 후 다음 실행을 기다려주세요 '
+            '(전종목 스캔은 처음 한 번은 수십 분, 이후엔 수 분 걸립니다).'
+        )
+        return
+
+    signals = data.get('signals', {})
+    generated_at = (data.get('generated_at') or '')[:19].replace('T', ' ')
+    st.caption(f"기준 시각: {generated_at or '알 수 없음'} · 대상 {data.get('universe_count', 0)}개 종목")
+
+    trend = signals.get('trend', [])
+    reversion = signals.get('reversion', [])
+    breakout = signals.get('breakout', [])
+    divergence = signals.get('divergence', [])
+
+    tab_trend, tab_reversion, tab_breakout, tab_divergence = st.tabs([
+        f'추세추종형 ({len(trend)})',
+        f'역추세형 ({len(reversion)})',
+        f'돌파매매 ({len(breakout)})',
+        f'다이버전스 ({len(divergence)})',
+    ])
+
+    with tab_trend:
+        st.caption(
+            '정배열(20일선 > 60일선 > 120일선) + MACD 골든크로스(0선 위) + '
+            '거래량 평소(20일 평균) 대비 150% 이상 → 추세 초입 매수 후보'
+        )
+        df = _recommendation_table(trend, {'close': '현재가', 'volume_ratio': '거래량 배수'})
+        if df.empty:
+            st.info('조건을 만족하는 종목이 없습니다.')
+        else:
+            st.dataframe(df, width='stretch', hide_index=True)
+
+    with tab_reversion:
+        st.caption(
+            '볼린저밴드 하단 근접·이탈 + RSI 30 이하(과매도) + 거래량 급감(20일 평균의 '
+            '70% 이하, 투매 소진 신호) → 단기 반등 매수 후보'
+        )
+        df = _recommendation_table(
+            reversion, {'close': '현재가', 'rsi': 'RSI', 'volume_ratio': '거래량 배수'}
+        )
+        if df.empty:
+            st.info('조건을 만족하는 종목이 없습니다.')
+        else:
+            st.dataframe(df, width='stretch', hide_index=True)
+
+    with tab_breakout:
+        st.caption(
+            '박스권(최근 20일 고점) 상단 돌파. 거래량이 20일 평균의 200% 이상이면 '
+            '"진성 돌파", 그 미만이면 거래량 없는 돌파(페이크 브레이크아웃) 가능성이 '
+            '높다고 보고 "페이크 위험"으로 표시합니다.'
+        )
+        df = _recommendation_table(
+            breakout,
+            {'close': '현재가', 'box_high': '박스 상단', 'volume_ratio': '거래량 배수', 'fake_risk': '페이크 위험'},
+        )
+        if df.empty:
+            st.info('조건을 만족하는 종목이 없습니다.')
+        else:
+            df['페이크 위험'] = df['페이크 위험'].map({True: '⚠️ 위험', False: '정상(진성 돌파)'})
+            st.dataframe(df, width='stretch', hide_index=True)
+
+    with tab_divergence:
+        st.caption(
+            '가격은 신고점을 경신했는데 RSI 또는 MACD는 이전 고점보다 낮음 → 상승 '
+            '동력이 약해지고 있다는 추세 전환 경고 신호입니다. 4개 신호 중 가장 '
+            '먼저 확인하는 걸 권장합니다.'
+        )
+        df = _recommendation_table(
+            divergence,
+            {
+                'close': '현재가(신고점)', 'prev_peak_close': '이전 고점가',
+                'rsi': '현재 RSI', 'prev_peak_rsi': '이전 고점 RSI',
+            },
+        )
+        if df.empty:
+            st.info('조건을 만족하는 종목이 없습니다.')
+        else:
+            st.dataframe(df, width='stretch', hide_index=True)
+
+
 def humanize_age(published_at, now):
     delta = now - published_at
     minutes = int(delta.total_seconds() // 60)
@@ -3261,8 +3388,8 @@ def main():
 
     interval = render_sidebar()
 
-    tab_market, tab_portfolio, tab_fx_news, tab_opinion = st.tabs(
-        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스', '종목 분석']
+    tab_market, tab_portfolio, tab_fx_news, tab_opinion, tab_recommend = st.tabs(
+        ['전체 시장현황', '내 계좌 포트폴리오', '환율 및 뉴스', '종목 분석', '종목추천']
     )
 
     # 탭별로 "값이 자주 바뀌는 패널"(카드/지표/뉴스)만 자동 새로고침하고, 브리핑·장기
@@ -3293,6 +3420,9 @@ def main():
 
     with tab_opinion:
         render_stock_opinion_tab()
+
+    with tab_recommend:
+        render_recommendation_tab()
 
 
 if __name__ == '__main__':

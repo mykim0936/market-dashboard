@@ -1,0 +1,1821 @@
+{
+  "generated_at": "2026-09-18T14:07:48.928857",
+  "universe_count": 2762,
+  "signals": {
+    "trend": [
+      {
+        "symbol": "051160",
+        "name": "지어소프트",
+        "close": 11980.0,
+        "volume_ratio": 14.95
+      },
+      {
+        "symbol": "042040",
+        "name": "케이피엠테크",
+        "close": 5220.0,
+        "volume_ratio": 4.79
+      },
+      {
+        "symbol": "368970",
+        "name": "오에스피",
+        "close": 2695.0,
+        "volume_ratio": 3.12
+      },
+      {
+        "symbol": "033560",
+        "name": "블루콤",
+        "close": 4765.0,
+        "volume_ratio": 1.68
+      }
+    ],
+    "reversion": [
+      {
+        "symbol": "000480",
+        "name": "CR홀딩스",
+        "close": 4360.0,
+        "rsi": 28.0,
+        "volume_ratio": 0.68
+      },
+      {
+        "symbol": "104460",
+        "name": "디와이피엔에프",
+        "close": 6760.0,
+        "rsi": 23.4,
+        "volume_ratio": 0.66
+      },
+      {
+        "symbol": "265560",
+        "name": "영화테크",
+        "close": 6400.0,
+        "rsi": 28.4,
+        "volume_ratio": 0.62
+      },
+      {
+        "symbol": "004545",
+        "name": "깨끗한나라우",
+        "close": 3110.0,
+        "rsi": 19.1,
+        "volume_ratio": 0.49
+      },
+      {
+        "symbol": "064480",
+        "name": "브리지텍",
+        "close": 2600.0,
+        "rsi": 27.5,
+        "volume_ratio": 0.47
+      },
+      {
+        "symbol": "034220",
+        "name": "LG디스플레이",
+        "close": 8380.0,
+        "rsi": 28.0,
+        "volume_ratio": 0.46
+      },
+      {
+        "symbol": "060900",
+        "name": "에이전트AI",
+        "close": 3030.0,
+        "rsi": 26.7,
+        "volume_ratio": 0.43
+      },
+      {
+        "symbol": "023440",
+        "name": "제이스코홀딩스",
+        "close": 521.0,
+        "rsi": 27.6,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "038060",
+        "name": "루멘스바이오스",
+        "close": 689.0,
+        "rsi": 29.9,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "043100",
+        "name": "알파AI",
+        "close": 520.0,
+        "rsi": 22.4,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "044180",
+        "name": "KD",
+        "close": 205.0,
+        "rsi": 25.5,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "064090",
+        "name": "인크레더블버즈",
+        "close": 798.0,
+        "rsi": 22.7,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "087260",
+        "name": "모바일어플라이언스",
+        "close": 247.0,
+        "rsi": 29.1,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "182400",
+        "name": "엔케이젠바이오텍코리아",
+        "close": 3670.0,
+        "rsi": 0.0,
+        "volume_ratio": 0.0
+      },
+      {
+        "symbol": "276040",
+        "name": "스코넥",
+        "close": 327.0,
+        "rsi": 22.7,
+        "volume_ratio": 0.0
+      }
+    ],
+    "breakout": [
+      {
+        "symbol": "232830",
+        "name": "아이티센피엔에스",
+        "close": 3485.0,
+        "box_high": 3480.0,
+        "volume_ratio": 18.29,
+        "fake_risk": false
+      },
+      {
+        "symbol": "209640",
+        "name": "와이제이링크",
+        "close": 3820.0,
+        "box_high": 3520.0,
+        "volume_ratio": 16.6,
+        "fake_risk": false
+      },
+      {
+        "symbol": "042370",
+        "name": "비츠로테크",
+        "close": 11440.0,
+        "box_high": 9030.0,
+        "volume_ratio": 15.71,
+        "fake_risk": false
+      },
+      {
+        "symbol": "396270",
+        "name": "넥스트칩",
+        "close": 2405.0,
+        "box_high": 2250.0,
+        "volume_ratio": 14.99,
+        "fake_risk": false
+      },
+      {
+        "symbol": "051160",
+        "name": "지어소프트",
+        "close": 11980.0,
+        "box_high": 10930.0,
+        "volume_ratio": 14.95,
+        "fake_risk": false
+      },
+      {
+        "symbol": "478340",
+        "name": "나라스페이스테크놀로지",
+        "close": 13850.0,
+        "box_high": 11100.0,
+        "volume_ratio": 13.11,
+        "fake_risk": false
+      },
+      {
+        "symbol": "274090",
+        "name": "켄코아에어로스페이스",
+        "close": 11530.0,
+        "box_high": 11090.0,
+        "volume_ratio": 13.08,
+        "fake_risk": false
+      },
+      {
+        "symbol": "007530",
+        "name": "와이엠",
+        "close": 1785.0,
+        "box_high": 1630.0,
+        "volume_ratio": 12.77,
+        "fake_risk": false
+      },
+      {
+        "symbol": "234030",
+        "name": "싸이닉솔루션",
+        "close": 3460.0,
+        "box_high": 3305.0,
+        "volume_ratio": 12.1,
+        "fake_risk": false
+      },
+      {
+        "symbol": "201490",
+        "name": "미투온",
+        "close": 4635.0,
+        "box_high": 3840.0,
+        "volume_ratio": 11.11,
+        "fake_risk": false
+      },
+      {
+        "symbol": "321820",
+        "name": "아티스트컴퍼니",
+        "close": 3920.0,
+        "box_high": 3750.0,
+        "volume_ratio": 10.83,
+        "fake_risk": false
+      },
+      {
+        "symbol": "027360",
+        "name": "아주IB투자",
+        "close": 3855.0,
+        "box_high": 3845.0,
+        "volume_ratio": 9.28,
+        "fake_risk": false
+      },
+      {
+        "symbol": "488900",
+        "name": "비츠로넥스텍",
+        "close": 12130.0,
+        "box_high": 10790.0,
+        "volume_ratio": 9.27,
+        "fake_risk": false
+      },
+      {
+        "symbol": "357580",
+        "name": "아모센스",
+        "close": 6880.0,
+        "box_high": 6640.0,
+        "volume_ratio": 8.66,
+        "fake_risk": false
+      },
+      {
+        "symbol": "457370",
+        "name": "한켐",
+        "close": 12640.0,
+        "box_high": 10670.0,
+        "volume_ratio": 8.0,
+        "fake_risk": false
+      },
+      {
+        "symbol": "003780",
+        "name": "진양산업",
+        "close": 4525.0,
+        "box_high": 4445.0,
+        "volume_ratio": 7.82,
+        "fake_risk": false
+      },
+      {
+        "symbol": "321370",
+        "name": "센서뷰",
+        "close": 1686.0,
+        "box_high": 1600.0,
+        "volume_ratio": 7.8,
+        "fake_risk": false
+      },
+      {
+        "symbol": "451760",
+        "name": "컨텍",
+        "close": 8150.0,
+        "box_high": 7770.0,
+        "volume_ratio": 7.5,
+        "fake_risk": false
+      },
+      {
+        "symbol": "051630",
+        "name": "진양화학",
+        "close": 1775.0,
+        "box_high": 1495.0,
+        "volume_ratio": 7.49,
+        "fake_risk": false
+      },
+      {
+        "symbol": "043260",
+        "name": "성호전자",
+        "close": 21600.0,
+        "box_high": 20400.0,
+        "volume_ratio": 6.76,
+        "fake_risk": false
+      },
+      {
+        "symbol": "321260",
+        "name": "프로이천",
+        "close": 1742.0,
+        "box_high": 1740.0,
+        "volume_ratio": 6.27,
+        "fake_risk": false
+      },
+      {
+        "symbol": "063440",
+        "name": "SM Life Design",
+        "close": 1079.0,
+        "box_high": 1072.0,
+        "volume_ratio": 5.98,
+        "fake_risk": false
+      },
+      {
+        "symbol": "295310",
+        "name": "에이치브이엠",
+        "close": 60700.0,
+        "box_high": 54400.0,
+        "volume_ratio": 5.63,
+        "fake_risk": false
+      },
+      {
+        "symbol": "211270",
+        "name": "AP위성",
+        "close": 9240.0,
+        "box_high": 8890.0,
+        "volume_ratio": 5.61,
+        "fake_risk": false
+      },
+      {
+        "symbol": "348080",
+        "name": "큐라티스",
+        "close": 4815.0,
+        "box_high": 3705.0,
+        "volume_ratio": 5.54,
+        "fake_risk": false
+      },
+      {
+        "symbol": "067920",
+        "name": "이글루",
+        "close": 6190.0,
+        "box_high": 5950.0,
+        "volume_ratio": 5.51,
+        "fake_risk": false
+      },
+      {
+        "symbol": "365900",
+        "name": "브이씨",
+        "close": 2740.0,
+        "box_high": 2710.0,
+        "volume_ratio": 5.38,
+        "fake_risk": false
+      },
+      {
+        "symbol": "192650",
+        "name": "드림텍",
+        "close": 7660.0,
+        "box_high": 7300.0,
+        "volume_ratio": 4.91,
+        "fake_risk": false
+      },
+      {
+        "symbol": "474170",
+        "name": "루미르",
+        "close": 7270.0,
+        "box_high": 6900.0,
+        "volume_ratio": 4.81,
+        "fake_risk": false
+      },
+      {
+        "symbol": "042040",
+        "name": "케이피엠테크",
+        "close": 5220.0,
+        "box_high": 5020.0,
+        "volume_ratio": 4.79,
+        "fake_risk": false
+      },
+      {
+        "symbol": "053800",
+        "name": "안랩",
+        "close": 65400.0,
+        "box_high": 64700.0,
+        "volume_ratio": 4.05,
+        "fake_risk": false
+      },
+      {
+        "symbol": "261780",
+        "name": "아리바이오랩",
+        "close": 4285.0,
+        "box_high": 4100.0,
+        "volume_ratio": 3.72,
+        "fake_risk": false
+      },
+      {
+        "symbol": "002360",
+        "name": "SH에너지화학",
+        "close": 1950.0,
+        "box_high": 1799.0,
+        "volume_ratio": 3.5,
+        "fake_risk": false
+      },
+      {
+        "symbol": "340450",
+        "name": "지씨지놈",
+        "close": 7000.0,
+        "box_high": 6870.0,
+        "volume_ratio": 3.44,
+        "fake_risk": false
+      },
+      {
+        "symbol": "126730",
+        "name": "코칩",
+        "close": 24550.0,
+        "box_high": 23950.0,
+        "volume_ratio": 3.31,
+        "fake_risk": false
+      },
+      {
+        "symbol": "110020",
+        "name": "전진바이오팜",
+        "close": 2145.0,
+        "box_high": 2135.0,
+        "volume_ratio": 3.3,
+        "fake_risk": false
+      },
+      {
+        "symbol": "036170",
+        "name": "에이치엠넥스",
+        "close": 2700.0,
+        "box_high": 2620.0,
+        "volume_ratio": 3.23,
+        "fake_risk": false
+      },
+      {
+        "symbol": "033640",
+        "name": "네패스",
+        "close": 26750.0,
+        "box_high": 25150.0,
+        "volume_ratio": 3.22,
+        "fake_risk": false
+      },
+      {
+        "symbol": "439580",
+        "name": "블루엠텍",
+        "close": 2700.0,
+        "box_high": 2655.0,
+        "volume_ratio": 3.18,
+        "fake_risk": false
+      },
+      {
+        "symbol": "368970",
+        "name": "오에스피",
+        "close": 2695.0,
+        "box_high": 2630.0,
+        "volume_ratio": 3.12,
+        "fake_risk": false
+      },
+      {
+        "symbol": "456010",
+        "name": "아이씨티케이",
+        "close": 20500.0,
+        "box_high": 19830.0,
+        "volume_ratio": 3.12,
+        "fake_risk": false
+      },
+      {
+        "symbol": "082740",
+        "name": "한화엔진",
+        "close": 53000.0,
+        "box_high": 52400.0,
+        "volume_ratio": 2.94,
+        "fake_risk": false
+      },
+      {
+        "symbol": "138080",
+        "name": "오이솔루션",
+        "close": 27000.0,
+        "box_high": 26000.0,
+        "volume_ratio": 2.94,
+        "fake_risk": false
+      },
+      {
+        "symbol": "104480",
+        "name": "티케이케미칼",
+        "close": 1828.0,
+        "box_high": 1825.0,
+        "volume_ratio": 2.78,
+        "fake_risk": false
+      },
+      {
+        "symbol": "362990",
+        "name": "드림인사이트",
+        "close": 1287.0,
+        "box_high": 1249.0,
+        "volume_ratio": 2.74,
+        "fake_risk": false
+      },
+      {
+        "symbol": "172670",
+        "name": "에이엘티",
+        "close": 12380.0,
+        "box_high": 12360.0,
+        "volume_ratio": 2.67,
+        "fake_risk": false
+      },
+      {
+        "symbol": "126340",
+        "name": "비나텍",
+        "close": 77400.0,
+        "box_high": 76200.0,
+        "volume_ratio": 2.62,
+        "fake_risk": false
+      },
+      {
+        "symbol": "036030",
+        "name": "케이티알파",
+        "close": 4960.0,
+        "box_high": 4920.0,
+        "volume_ratio": 2.53,
+        "fake_risk": false
+      },
+      {
+        "symbol": "000150",
+        "name": "두산",
+        "close": 1405000.0,
+        "box_high": 1397000.0,
+        "volume_ratio": 2.49,
+        "fake_risk": false
+      },
+      {
+        "symbol": "094800",
+        "name": "맵스리얼티",
+        "close": 7950.0,
+        "box_high": 7920.0,
+        "volume_ratio": 2.46,
+        "fake_risk": false
+      },
+      {
+        "symbol": "127710",
+        "name": "아시아경제",
+        "close": 1188.0,
+        "box_high": 1178.0,
+        "volume_ratio": 2.43,
+        "fake_risk": false
+      },
+      {
+        "symbol": "130580",
+        "name": "나이스디앤비",
+        "close": 6800.0,
+        "box_high": 6640.0,
+        "volume_ratio": 2.35,
+        "fake_risk": false
+      },
+      {
+        "symbol": "010820",
+        "name": "퍼스텍",
+        "close": 6350.0,
+        "box_high": 6300.0,
+        "volume_ratio": 2.2,
+        "fake_risk": false
+      },
+      {
+        "symbol": "432320",
+        "name": "KB스타리츠",
+        "close": 1701.0,
+        "box_high": 1658.0,
+        "volume_ratio": 2.19,
+        "fake_risk": false
+      },
+      {
+        "symbol": "099320",
+        "name": "쎄트렉아이",
+        "close": 78300.0,
+        "box_high": 77900.0,
+        "volume_ratio": 2.01,
+        "fake_risk": false
+      },
+      {
+        "symbol": "360350",
+        "name": "코셈",
+        "close": 6600.0,
+        "box_high": 6480.0,
+        "volume_ratio": 1.92,
+        "fake_risk": true
+      },
+      {
+        "symbol": "014680",
+        "name": "한솔케미칼",
+        "close": 215000.0,
+        "box_high": 214500.0,
+        "volume_ratio": 1.75,
+        "fake_risk": true
+      },
+      {
+        "symbol": "089790",
+        "name": "제이티",
+        "close": 5510.0,
+        "box_high": 5450.0,
+        "volume_ratio": 1.71,
+        "fake_risk": true
+      },
+      {
+        "symbol": "068930",
+        "name": "디지털대성",
+        "close": 8920.0,
+        "box_high": 8890.0,
+        "volume_ratio": 1.65,
+        "fake_risk": true
+      },
+      {
+        "symbol": "013030",
+        "name": "하이록코리아",
+        "close": 35800.0,
+        "box_high": 35000.0,
+        "volume_ratio": 1.63,
+        "fake_risk": true
+      },
+      {
+        "symbol": "077360",
+        "name": "덕산하이메탈",
+        "close": 11220.0,
+        "box_high": 10840.0,
+        "volume_ratio": 1.63,
+        "fake_risk": true
+      },
+      {
+        "symbol": "443670",
+        "name": "에스피소프트",
+        "close": 5670.0,
+        "box_high": 5640.0,
+        "volume_ratio": 1.42,
+        "fake_risk": true
+      },
+      {
+        "symbol": "253590",
+        "name": "네오셈",
+        "close": 12240.0,
+        "box_high": 12190.0,
+        "volume_ratio": 1.37,
+        "fake_risk": true
+      },
+      {
+        "symbol": "000520",
+        "name": "삼일제약",
+        "close": 7470.0,
+        "box_high": 7430.0,
+        "volume_ratio": 1.34,
+        "fake_risk": true
+      },
+      {
+        "symbol": "389680",
+        "name": "유디엠텍",
+        "close": 2920.0,
+        "box_high": 2670.0,
+        "volume_ratio": 1.23,
+        "fake_risk": true
+      },
+      {
+        "symbol": "377190",
+        "name": "디앤디플랫폼리츠",
+        "close": 2275.0,
+        "box_high": 2265.0,
+        "volume_ratio": 1.04,
+        "fake_risk": true
+      },
+      {
+        "symbol": "092870",
+        "name": "엑시콘",
+        "close": 33700.0,
+        "box_high": 32800.0,
+        "volume_ratio": 0.78,
+        "fake_risk": true
+      },
+      {
+        "symbol": "168330",
+        "name": "내츄럴엔도텍",
+        "close": 2375.0,
+        "box_high": 2345.0,
+        "volume_ratio": 0.72,
+        "fake_risk": true
+      },
+      {
+        "symbol": "009620",
+        "name": "삼보산업",
+        "close": 4300.0,
+        "box_high": 917.0,
+        "volume_ratio": 0.65,
+        "fake_risk": true
+      },
+      {
+        "symbol": "032580",
+        "name": "피델릭스",
+        "close": 5210.0,
+        "box_high": 5190.0,
+        "volume_ratio": 0.64,
+        "fake_risk": true
+      },
+      {
+        "symbol": "005320",
+        "name": "온타이드",
+        "close": 1271.0,
+        "box_high": 1249.0,
+        "volume_ratio": 0.61,
+        "fake_risk": true
+      },
+      {
+        "symbol": "037070",
+        "name": "파세코",
+        "close": 6460.0,
+        "box_high": 6320.0,
+        "volume_ratio": 0.57,
+        "fake_risk": true
+      },
+      {
+        "symbol": "002870",
+        "name": "신풍",
+        "close": 1168.0,
+        "box_high": 1163.0,
+        "volume_ratio": 0.51,
+        "fake_risk": true
+      },
+      {
+        "symbol": "092600",
+        "name": "앤씨앤",
+        "close": 2825.0,
+        "box_high": 2700.0,
+        "volume_ratio": 0.49,
+        "fake_risk": true
+      },
+      {
+        "symbol": "000300",
+        "name": "DH오토넥스",
+        "close": 4200.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "001470",
+        "name": "삼부토건",
+        "close": 5820.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "001570",
+        "name": "금양",
+        "close": 9900.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "001840",
+        "name": "이화공영",
+        "close": 2215.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "002410",
+        "name": "범양건영",
+        "close": 1935.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "005030",
+        "name": "부산주공",
+        "close": 486.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "005110",
+        "name": "한창",
+        "close": 1254.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "008600",
+        "name": "윌비스",
+        "close": 2620.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "009310",
+        "name": "참엔지니어링",
+        "close": 5330.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "009440",
+        "name": "KC그린홀딩스",
+        "close": 756.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "0099X0",
+        "name": "IBKS제25호스팩",
+        "close": 2180.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "011000",
+        "name": "진원생명과학",
+        "close": 2670.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "011810",
+        "name": "STX",
+        "close": 3530.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "015020",
+        "name": "이스타코",
+        "close": 928.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "016790",
+        "name": "현대사료",
+        "close": 994.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "017040",
+        "name": "광명전기",
+        "close": 932.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "019490",
+        "name": "엑시큐어하이트론",
+        "close": 541.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "020760",
+        "name": "일진디스플",
+        "close": 902.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "023440",
+        "name": "제이스코홀딩스",
+        "close": 521.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "030350",
+        "name": "드래곤플라이",
+        "close": 973.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "031860",
+        "name": "디에이치엑스컴퍼니",
+        "close": 6930.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "036690",
+        "name": "코맥스",
+        "close": 2885.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "041590",
+        "name": "플래스크",
+        "close": 2370.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "043100",
+        "name": "알파AI",
+        "close": 520.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "043220",
+        "name": "티에스넥스젠",
+        "close": 1710.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "044180",
+        "name": "KD",
+        "close": 205.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "049180",
+        "name": "셀루메드",
+        "close": 1009.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "052770",
+        "name": "아이톡시",
+        "close": 312.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "054180",
+        "name": "메디콕스",
+        "close": 2295.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "064090",
+        "name": "인크레더블버즈",
+        "close": 798.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "065420",
+        "name": "에스아이리소스",
+        "close": 940.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "065570",
+        "name": "삼영이엔씨",
+        "close": 764.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "066410",
+        "name": "버킷스튜디오",
+        "close": 1153.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "066790",
+        "name": "씨씨에스",
+        "close": 2205.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "068240",
+        "name": "다원시스",
+        "close": 2530.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "068940",
+        "name": "셀피글로벌",
+        "close": 778.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "069460",
+        "name": "대호에이엘",
+        "close": 2660.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "073190",
+        "name": "듀오백",
+        "close": 1622.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "073640",
+        "name": "테라사이언스",
+        "close": 654.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "074610",
+        "name": "이엔플러스",
+        "close": 5110.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "079970",
+        "name": "투비소프트",
+        "close": 596.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "080720",
+        "name": "한국유니온제약",
+        "close": 2410.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "087260",
+        "name": "모바일어플라이언스",
+        "close": 247.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "099520",
+        "name": "DGI",
+        "close": 1284.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "106080",
+        "name": "케이이엠텍",
+        "close": 1650.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "119650",
+        "name": "KC코트렐",
+        "close": 918.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "121800",
+        "name": "비덴트",
+        "close": 3320.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "143210",
+        "name": "핸즈코퍼레이션",
+        "close": 1199.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "145210",
+        "name": "다이나믹디자인",
+        "close": 2240.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "182400",
+        "name": "엔케이젠바이오텍코리아",
+        "close": 3670.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "183490",
+        "name": "엔지켐생명과학",
+        "close": 990.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "196490",
+        "name": "디에이테크놀로지",
+        "close": 6090.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "203400",
+        "name": "에이비온",
+        "close": 676.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "214610",
+        "name": "롤링스톤",
+        "close": 2290.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "217480",
+        "name": "에스디생명공학",
+        "close": 499.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "234920",
+        "name": "자이글",
+        "close": 5310.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "241820",
+        "name": "피씨엘",
+        "close": 6040.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "244460",
+        "name": "올리패스",
+        "close": 1651.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "245620",
+        "name": "EDGC",
+        "close": 741.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "246250",
+        "name": "에스엘에스바이오",
+        "close": 1969.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "246720",
+        "name": "아스타",
+        "close": 6070.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "258830",
+        "name": "세종메디칼",
+        "close": 412.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "263050",
+        "name": "유틸렉스",
+        "close": 959.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "276040",
+        "name": "스코넥",
+        "close": 327.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "284620",
+        "name": "카이노스메드",
+        "close": 1087.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "288330",
+        "name": "파라택시스코리아",
+        "close": 416.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "294090",
+        "name": "이오플로우",
+        "close": 1490.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "304840",
+        "name": "피플바이오",
+        "close": 561.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "309710",
+        "name": "아이티켐",
+        "close": 21000.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "313760",
+        "name": "캐리",
+        "close": 468.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "340930",
+        "name": "성원에너텍",
+        "close": 806.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "348950",
+        "name": "제이알글로벌리츠",
+        "close": 1182.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "352770",
+        "name": "셀레스트라",
+        "close": 5250.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "377460",
+        "name": "큐에이드",
+        "close": 4080.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "380540",
+        "name": "옵티코어",
+        "close": 8450.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "393970",
+        "name": "대진첨단소재",
+        "close": 2825.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "412540",
+        "name": "제일엠앤에스",
+        "close": 3935.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "418250",
+        "name": "시큐레터",
+        "close": 6550.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "468760",
+        "name": "유진스팩10호",
+        "close": 2080.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "469480",
+        "name": "IBKS제24호스팩",
+        "close": 2130.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "482680",
+        "name": "미래에셋비전스팩7호",
+        "close": 2055.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      },
+      {
+        "symbol": "498390",
+        "name": "한화플러스제5호스팩",
+        "close": 2035.0,
+        "box_high": 0.0,
+        "volume_ratio": 0.0,
+        "fake_risk": true
+      }
+    ],
+    "divergence": [
+      {
+        "symbol": "000430",
+        "name": "대원강업",
+        "close": 4925.0,
+        "prev_peak_close": 4805.0,
+        "rsi": 70.6,
+        "prev_peak_rsi": 72.0,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "001430",
+        "name": "세아베스틸지주",
+        "close": 45450.0,
+        "prev_peak_close": 45000.0,
+        "rsi": 61.8,
+        "prev_peak_rsi": 64.7,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "004100",
+        "name": "태양금속",
+        "close": 2990.0,
+        "prev_peak_close": 2860.0,
+        "rsi": 66.9,
+        "prev_peak_rsi": 69.1,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "004310",
+        "name": "현대약품",
+        "close": 10500.0,
+        "prev_peak_close": 10440.0,
+        "rsi": 73.2,
+        "prev_peak_rsi": 78.7,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "006050",
+        "name": "국영지앤엠",
+        "close": 5600.0,
+        "prev_peak_close": 5250.0,
+        "rsi": 90.0,
+        "prev_peak_rsi": 95.6,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "023450",
+        "name": "동남합성",
+        "close": 31950.0,
+        "prev_peak_close": 31800.0,
+        "rsi": 65.1,
+        "prev_peak_rsi": 67.9,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "035080",
+        "name": "그래디언트",
+        "close": 12470.0,
+        "prev_peak_close": 12250.0,
+        "rsi": 69.6,
+        "prev_peak_rsi": 76.3,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "035610",
+        "name": "솔본",
+        "close": 5290.0,
+        "prev_peak_close": 5060.0,
+        "rsi": 66.0,
+        "prev_peak_rsi": 62.4,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "036030",
+        "name": "케이티알파",
+        "close": 4960.0,
+        "prev_peak_close": 4800.0,
+        "rsi": 74.1,
+        "prev_peak_rsi": 67.5,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "043590",
+        "name": "웰킵스하이텍",
+        "close": 1529.0,
+        "prev_peak_close": 1510.0,
+        "rsi": 66.3,
+        "prev_peak_rsi": 66.9,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "048530",
+        "name": "인트론바이오",
+        "close": 2950.0,
+        "prev_peak_close": 2875.0,
+        "rsi": 61.4,
+        "prev_peak_rsi": 60.6,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "051160",
+        "name": "지어소프트",
+        "close": 11980.0,
+        "prev_peak_close": 11220.0,
+        "rsi": 69.5,
+        "prev_peak_rsi": 89.4,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "053800",
+        "name": "안랩",
+        "close": 65400.0,
+        "prev_peak_close": 64500.0,
+        "rsi": 73.5,
+        "prev_peak_rsi": 77.7,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "066360",
+        "name": "체리부로",
+        "close": 1490.0,
+        "prev_peak_close": 1471.0,
+        "rsi": 82.6,
+        "prev_peak_rsi": 83.9,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "067080",
+        "name": "대화제약",
+        "close": 11450.0,
+        "prev_peak_close": 11400.0,
+        "rsi": 61.5,
+        "prev_peak_rsi": 67.1,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "068930",
+        "name": "디지털대성",
+        "close": 8920.0,
+        "prev_peak_close": 8670.0,
+        "rsi": 72.3,
+        "prev_peak_rsi": 69.7,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "080580",
+        "name": "오킨스전자",
+        "close": 22400.0,
+        "prev_peak_close": 21000.0,
+        "rsi": 68.9,
+        "prev_peak_rsi": 70.3,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "083930",
+        "name": "아바코",
+        "close": 11850.0,
+        "prev_peak_close": 11790.0,
+        "rsi": 60.1,
+        "prev_peak_rsi": 59.3,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "089790",
+        "name": "제이티",
+        "close": 5510.0,
+        "prev_peak_close": 5200.0,
+        "rsi": 68.3,
+        "prev_peak_rsi": 69.3,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "091120",
+        "name": "이엠텍",
+        "close": 5050.0,
+        "prev_peak_close": 4980.0,
+        "rsi": 65.5,
+        "prev_peak_rsi": 67.8,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "092870",
+        "name": "엑시콘",
+        "close": 33700.0,
+        "prev_peak_close": 32650.0,
+        "rsi": 67.9,
+        "prev_peak_rsi": 73.2,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "104480",
+        "name": "티케이케미칼",
+        "close": 1828.0,
+        "prev_peak_close": 1779.0,
+        "rsi": 65.5,
+        "prev_peak_rsi": 61.0,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "109670",
+        "name": "씨싸이트",
+        "close": 6790.0,
+        "prev_peak_close": 6600.0,
+        "rsi": 73.0,
+        "prev_peak_rsi": 80.3,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "131180",
+        "name": "딜리",
+        "close": 4285.0,
+        "prev_peak_close": 4215.0,
+        "rsi": 76.5,
+        "prev_peak_rsi": 78.4,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "140070",
+        "name": "서플러스글로벌",
+        "close": 2075.0,
+        "prev_peak_close": 2050.0,
+        "rsi": 63.4,
+        "prev_peak_rsi": 67.9,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "140410",
+        "name": "메지온",
+        "close": 74100.0,
+        "prev_peak_close": 74000.0,
+        "rsi": 61.3,
+        "prev_peak_rsi": 65.6,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "153490",
+        "name": "우리이앤엘하루틴",
+        "close": 3165.0,
+        "prev_peak_close": 3130.0,
+        "rsi": 83.3,
+        "prev_peak_rsi": 88.4,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "156100",
+        "name": "엘앤케이바이오",
+        "close": 5940.0,
+        "prev_peak_close": 5590.0,
+        "rsi": 70.3,
+        "prev_peak_rsi": 73.0,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "200350",
+        "name": "아티스트스튜디오",
+        "close": 2810.0,
+        "prev_peak_close": 2590.0,
+        "rsi": 59.8,
+        "prev_peak_rsi": 60.9,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "217190",
+        "name": "제너셈",
+        "close": 7200.0,
+        "prev_peak_close": 7110.0,
+        "rsi": 68.0,
+        "prev_peak_rsi": 72.5,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "258790",
+        "name": "소프트캠프",
+        "close": 6090.0,
+        "prev_peak_close": 5920.0,
+        "rsi": 75.8,
+        "prev_peak_rsi": 76.7,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "294630",
+        "name": "서남",
+        "close": 3190.0,
+        "prev_peak_close": 3120.0,
+        "rsi": 65.7,
+        "prev_peak_rsi": 65.8,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "330590",
+        "name": "롯데리츠",
+        "close": 3985.0,
+        "prev_peak_close": 3965.0,
+        "rsi": 60.5,
+        "prev_peak_rsi": 68.0,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "336680",
+        "name": "탑런토탈솔루션",
+        "close": 2980.0,
+        "prev_peak_close": 2955.0,
+        "rsi": 71.0,
+        "prev_peak_rsi": 72.6,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "348080",
+        "name": "큐라티스",
+        "close": 4815.0,
+        "prev_peak_close": 3885.0,
+        "rsi": 82.6,
+        "prev_peak_rsi": 94.8,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "367000",
+        "name": "플래티어",
+        "close": 3585.0,
+        "prev_peak_close": 3545.0,
+        "rsi": 64.0,
+        "prev_peak_rsi": 72.6,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "368970",
+        "name": "오에스피",
+        "close": 2695.0,
+        "prev_peak_close": 2610.0,
+        "rsi": 66.7,
+        "prev_peak_rsi": 70.7,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "377190",
+        "name": "디앤디플랫폼리츠",
+        "close": 2275.0,
+        "prev_peak_close": 2240.0,
+        "rsi": 67.3,
+        "prev_peak_rsi": 67.6,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "432470",
+        "name": "케이엔에스",
+        "close": 10890.0,
+        "prev_peak_close": 10730.0,
+        "rsi": 61.7,
+        "prev_peak_rsi": 68.0,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "441270",
+        "name": "파인엠텍",
+        "close": 9400.0,
+        "prev_peak_close": 9350.0,
+        "rsi": 60.6,
+        "prev_peak_rsi": 63.9,
+        "rsi_diverged": true,
+        "macd_diverged": false
+      },
+      {
+        "symbol": "457370",
+        "name": "한켐",
+        "close": 12640.0,
+        "prev_peak_close": 10460.0,
+        "rsi": 75.9,
+        "prev_peak_rsi": 44.2,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "482520",
+        "name": "교보16호스팩",
+        "close": 2065.0,
+        "prev_peak_close": 2060.0,
+        "rsi": 67.1,
+        "prev_peak_rsi": 74.5,
+        "rsi_diverged": true,
+        "macd_diverged": true
+      },
+      {
+        "symbol": "488900",
+        "name": "비츠로넥스텍",
+        "close": 12130.0,
+        "prev_peak_close": 11670.0,
+        "rsi": 73.7,
+        "prev_peak_rsi": 67.1,
+        "rsi_diverged": false,
+        "macd_diverged": true
+      }
+    ]
+  }
+}
